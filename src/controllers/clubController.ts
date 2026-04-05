@@ -181,11 +181,26 @@ export async function joinClubHandler(
   try {
     const userId = (req as Request & { user?: { id: string } }).user?.id;
     if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Not authenticated.');
-    const { joinCode } = req.body as { joinCode?: unknown };
+    const { joinCode, firstName, lastName } = req.body as {
+      joinCode?: unknown;
+      firstName?: unknown;
+      lastName?: unknown;
+    };
     if (typeof joinCode !== 'string' || !joinCode.trim()) {
       throw new AppError(400, 'INVALID_JOIN_CODE', 'joinCode is required.');
     }
-    const result = await joinClub(joinCode.trim(), userId);
+    if (typeof firstName !== 'string' || !firstName.trim()) {
+      throw new AppError(400, 'INVALID_NAME', 'First name is required.');
+    }
+    if (typeof lastName !== 'string' || !lastName.trim()) {
+      throw new AppError(400, 'INVALID_NAME', 'Last name is required.');
+    }
+    const result = await joinClub(
+      joinCode.trim(),
+      userId,
+      firstName.trim(),
+      lastName.trim()
+    );
     res.status(201).json({ success: true, data: result });
   } catch (error) {
     next(error);

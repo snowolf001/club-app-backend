@@ -12,12 +12,14 @@ type MembershipRow = {
   role: string;
   credits_remaining: number;
   status: string;
+  user_name: string;
 };
 
 export type MembershipItem = {
   membershipId: string;
   clubId: string;
   userId: string;
+  userName: string;
   role: string;
   credits: number;
   active: boolean;
@@ -30,6 +32,7 @@ function mapMembership(row: MembershipRow): MembershipItem {
     membershipId: row.id,
     clubId: row.club_id,
     userId: row.user_id,
+    userName: row.user_name ?? '',
     role: row.role,
     credits: row.credits_remaining,
     active: row.status === 'active',
@@ -44,10 +47,12 @@ export async function getMyMembership(
 ): Promise<MembershipItem> {
   const result = await pool.query<MembershipRow>(
     `
-      SELECT id, user_id, club_id, role, credits_remaining, status
-      FROM memberships
-      WHERE club_id = $1
-        AND user_id = $2
+      SELECT m.id, m.user_id, m.club_id, m.role, m.credits_remaining, m.status,
+             u.name AS user_name
+      FROM memberships m
+      JOIN users u ON u.id = m.user_id
+      WHERE m.club_id = $1
+        AND m.user_id = $2
       LIMIT 1
     `,
     [clubId, userId]
@@ -68,9 +73,11 @@ export async function getMembershipById(membershipId: string): Promise<{
     MembershipRow & { club_name: string; club_join_code: string | null }
   >(
     `SELECT m.id, m.user_id, m.club_id, m.role, m.credits_remaining, m.status,
+            u.name AS user_name,
             c.name AS club_name, c.join_code AS club_join_code
      FROM memberships m
      JOIN clubs c ON c.id = m.club_id
+     JOIN users u ON u.id = m.user_id
      WHERE m.id = $1 LIMIT 1`,
     [membershipId]
   );

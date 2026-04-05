@@ -190,7 +190,9 @@ export async function addClubLocation(
 
 export async function joinClub(
   joinCode: string,
-  userId: string
+  userId: string,
+  firstName: string,
+  lastName: string
 ): Promise<{ membershipId: string; clubId: string }> {
   const clubResult = await pool.query<{ id: string }>(
     `SELECT id FROM clubs WHERE UPPER(join_code) = UPPER($1) LIMIT 1`,
@@ -209,6 +211,31 @@ export async function joinClub(
   if ((existing.rowCount ?? 0) > 0) {
     return { membershipId: existing.rows[0].id, clubId };
   }
+
+  // Duplicate name check: no other active member in this club with the same full name.
+  const fullName = `${firstName} ${lastName}`;
+  const duplicate = await pool.query<{ id: string }>(
+    `SELECT m.id FROM memberships m
+     JOIN users u ON u.id = m.user_id
+     WHERE m.club_id = $1
+       AND m.user_id <> $2
+       AND LOWER(u.name) = LOWER($3)
+     LIMIT 1`,
+    [clubId, userId, fullName]
+  );
+  if ((duplicate.rowCount ?? 0) > 0) {
+    throw new AppError(
+      409,
+      'DUPLICATE_NAME',
+      `A member named "${fullName}" already exists in this club. Please use a different name.`
+    );
+  }
+
+  // Update this user's display name.
+  await pool.query(
+    `UPDATE users SET name = $1, updated_at = NOW() WHERE id = $2`,
+    [fullName, userId]
+  );
 
   const result = await pool.query<{ id: string }>(
     `INSERT INTO memberships (club_id, user_id, role, status, credits_remaining)
