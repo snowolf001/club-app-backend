@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
 import { isValidUUID } from '../utils/validators';
+import { getCurrentUserId } from '../lib/auth';
+import { pool } from '../db/pool';
 import {
   getClub,
   getClubSettings,
@@ -156,6 +158,18 @@ export async function addClubLocationHandler(
         'clubId must be a valid UUID.'
       );
     }
+
+    // Only admin or owner may add locations
+    const userId = getCurrentUserId(req);
+    const memberRow = await pool.query<{ role: string }>(
+      `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 LIMIT 1`,
+      [userId, clubId]
+    );
+    const role = memberRow.rows[0]?.role;
+    if (!role || !['admin', 'owner'].includes(role)) {
+      throw new AppError(403, 'FORBIDDEN', 'Only admins can add locations.');
+    }
+
     const { name, address } = req.body as { name?: unknown; address?: unknown };
     if (typeof name !== 'string' || !name.trim()) {
       throw new AppError(400, 'INVALID_LOCATION', 'Location name is required.');

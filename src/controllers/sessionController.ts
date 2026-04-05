@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
 import { isValidUUID } from '../utils/validators';
 import { getCurrentUserId } from '../lib/auth';
+import { pool } from '../db/pool';
 import {
   checkInToSession,
   manualCheckInToSession,
@@ -170,11 +171,33 @@ export async function createSessionHandler(
         'clubId must be a valid UUID.'
       );
     }
+
+    // locationId is required
+    if (locationId === undefined || locationId === null || locationId === '') {
+      throw new AppError(
+        400,
+        'LOCATION_ID_REQUIRED',
+        'locationId is required.'
+      );
+    }
     if (typeof locationId !== 'string' || !isValidUUID(locationId)) {
       throw new AppError(
         400,
         'INVALID_LOCATION_ID',
         'locationId must be a valid UUID.'
+      );
+    }
+
+    // Validate location exists and belongs to this club
+    const locRow = await pool.query<{ id: string }>(
+      `SELECT id FROM club_locations WHERE id = $1 AND club_id = $2 LIMIT 1`,
+      [locationId, clubId]
+    );
+    if ((locRow.rowCount ?? 0) === 0) {
+      throw new AppError(
+        404,
+        'LOCATION_NOT_FOUND',
+        'Location does not exist or does not belong to this club.'
       );
     }
     // title is optional; if provided it must be non-empty
