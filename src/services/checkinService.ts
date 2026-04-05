@@ -1,16 +1,20 @@
 import { PoolClient } from 'pg';
 import { pool } from '../db/pool';
 import { AppError } from '../errors/AppError';
+import { logger } from '../lib/logger';
 
 type CheckInParams = {
   sessionId: string;
   userId: string;
+  creditsUsed: number;
 };
 
 type CheckInResult = {
   attendanceId: string;
   remainingCredits: number;
   membershipId: string;
+  creditsUsed: number;
+  checkedInAt: string;
 };
 
 type SessionRow = {
@@ -31,6 +35,7 @@ type MembershipRow = {
 
 type AttendanceRow = {
   id: string;
+  checked_in_at: string;
 };
 
 function isUniqueViolation(error: unknown): boolean {
@@ -113,7 +118,7 @@ async function ensureNoDuplicateAttendance(
     [sessionId, userId]
   );
 
-  if (result.rowCount > 0) {
+  if ((result.rowCount ?? 0) > 0) {
     throw new AppError(
       409,
       'ALREADY_CHECKED_IN',
@@ -125,6 +130,7 @@ async function ensureNoDuplicateAttendance(
 export async function checkInToSession({
   sessionId,
   userId,
+  creditsUsed,
 }: CheckInParams): Promise<CheckInResult> {
   const client = await pool.connect();
 
@@ -140,7 +146,7 @@ export async function checkInToSession({
 
     await ensureNoDuplicateAttendance(client, sessionId, userId);
 
-    if (membership.credits_remaining < 1) {
+    if (membership.credits_remaining < creditsUsed) {
       throw new AppError(
         409,
         'INSUFFICIENT_CREDITS',
@@ -153,13 +159,13 @@ export async function checkInToSession({
     }>(
       `
         UPDATE memberships
-        SET credits_remaining = credits_remaining - 1,
+        SET credits_remaining = credits_remaining - $2,
             updated_at = NOW()
         WHERE id = $1
-          AND credits_remaining >= 1
+          AND credits_remaining >= $2
         RETURNING credits_remaining
       `,
-      [membership.id]
+      [membership.id, creditsUsed]
     );
 
     if (updatedMembershipResult.rowCount === 0) {
@@ -183,14 +189,15 @@ export async function checkInToSession({
             user_id,
             membership_id,
             check_in_method,
+            credits_used,
             checked_in_at,
             created_at,
             updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), NOW())
-          RETURNING id
+          VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), NOW())
+          RETURNING id, checked_in_at
         `,
-        [sessionId, session.club_id, userId, membership.id, 'self']
+        [sessionId, session.club_id, userId, membership.id, 'self', creditsUsed]
       );
 
       attendance = attendanceResult.rows[0];
@@ -226,7 +233,7 @@ export async function checkInToSession({
         userId,
         sessionId,
         attendance.id,
-        -1,
+        -creditsUsed,
         'checkin',
         'Credit deducted for session check-in',
       ]
@@ -256,9 +263,176 @@ export async function checkInToSession({
         JSON.stringify({
           sessionId,
           membershipId: membership.id,
-          creditDelta: -1,
+          creditsUsed,
+          creditDelta: -creditsUsed,
           remainingCredits,
           method: 'self',
+        }),
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    logger.info('check-in success', {
+      sessionId,
+      userId,
+      membershipId: membership.id,
+      creditsUsed,
+      remainingCredits,
+      attendanceId: attendance.id,
+    });
+
+    return {
+      attendanceId: attendance.id,
+      remainingCredits,
+      membershipId: membership.id,
+      creditsUsed,
+      checkedInAt: attendance.checked_in_at,
+    };
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      logger.error('check-in rollback failed', {
+        error:
+          rollbackError instanceof Error
+            ? rollbackError.message
+            : String(rollbackError),
+      });
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// ─── Manual check-in (host checks in a specific member) ───────────────────────
+
+type ManualCheckInParams = {
+  sessionId: string;
+  actorUserId: string;
+  targetMembershipId: string;
+  creditsUsed: number;
+};
+
+export async function manualCheckInToSession({
+  sessionId,
+  actorUserId,
+  targetMembershipId,
+  creditsUsed,
+}: ManualCheckInParams): Promise<CheckInResult> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const session = await getSessionForCheckin(client, sessionId);
+
+    // Look up target membership by its ID
+    const targetResult = await client.query<MembershipRow>(
+      `SELECT id, user_id, club_id, role, credits_remaining, status
+       FROM memberships WHERE id = $1 LIMIT 1 FOR UPDATE`,
+      [targetMembershipId]
+    );
+    if ((targetResult.rowCount ?? 0) === 0) {
+      throw new AppError(
+        404,
+        'MEMBERSHIP_NOT_FOUND',
+        'Target membership not found.'
+      );
+    }
+    const membership = targetResult.rows[0];
+
+    if (membership.club_id !== session.club_id) {
+      throw new AppError(
+        403,
+        'MEMBERSHIP_NOT_FOUND',
+        'Target member does not belong to this club.'
+      );
+    }
+    if (membership.status !== 'active') {
+      throw new AppError(
+        403,
+        'MEMBERSHIP_INACTIVE',
+        'Target membership is not active.'
+      );
+    }
+
+    await ensureNoDuplicateAttendance(client, sessionId, membership.user_id);
+
+    if (membership.credits_remaining < creditsUsed) {
+      throw new AppError(
+        409,
+        'INSUFFICIENT_CREDITS',
+        'Target member does not have enough credits.'
+      );
+    }
+
+    const updatedResult = await client.query<{ credits_remaining: number }>(
+      `UPDATE memberships SET credits_remaining = credits_remaining - $2, updated_at = NOW()
+       WHERE id = $1 AND credits_remaining >= $2 RETURNING credits_remaining`,
+      [membership.id, creditsUsed]
+    );
+    if (updatedResult.rowCount === 0) {
+      throw new AppError(
+        409,
+        'INSUFFICIENT_CREDITS',
+        'Not enough credits remaining.'
+      );
+    }
+    const remainingCredits = updatedResult.rows[0].credits_remaining;
+
+    let attendance: AttendanceRow;
+    try {
+      const attendanceResult = await client.query<AttendanceRow>(
+        `INSERT INTO attendances (session_id, club_id, user_id, membership_id, check_in_method, credits_used, checked_in_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'manual', $5, NOW(), NOW(), NOW()) RETURNING id, checked_in_at`,
+        [
+          sessionId,
+          session.club_id,
+          membership.user_id,
+          membership.id,
+          creditsUsed,
+        ]
+      );
+      attendance = attendanceResult.rows[0];
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new AppError(
+          409,
+          'ALREADY_CHECKED_IN',
+          'Member has already checked in.'
+        );
+      }
+      throw error;
+    }
+
+    await client.query(
+      `INSERT INTO credit_transactions (club_id, membership_id, user_id, session_id, attendance_id, amount, transaction_type, note, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'checkin', 'Manual check-in by host', NOW())`,
+      [
+        session.club_id,
+        membership.id,
+        membership.user_id,
+        sessionId,
+        attendance.id,
+        -creditsUsed,
+      ]
+    );
+
+    await client.query(
+      `INSERT INTO audit_logs (club_id, actor_user_id, target_user_id, entity_type, entity_id, action, metadata, created_at)
+       VALUES ($1, $2, $3, 'attendance', $4, 'manual_checkin', $5::jsonb, NOW())`,
+      [
+        session.club_id,
+        actorUserId,
+        membership.user_id,
+        attendance.id,
+        JSON.stringify({
+          sessionId,
+          membershipId: membership.id,
+          creditsUsed,
+          remainingCredits,
+          method: 'manual',
         }),
       ]
     );
@@ -269,13 +443,13 @@ export async function checkInToSession({
       attendanceId: attendance.id,
       remainingCredits,
       membershipId: membership.id,
+      creditsUsed,
+      checkedInAt: attendance.checked_in_at,
     };
   } catch (error) {
     try {
       await client.query('ROLLBACK');
-    } catch (rollbackError) {
-      console.error('[checkInToSession] rollback failed:', rollbackError);
-    }
+    } catch (_) {}
     throw error;
   } finally {
     client.release();
