@@ -1,5 +1,8 @@
 import { Router } from 'express';
-import { getMyAttendanceHandler } from '../controllers/attendanceController';
+import {
+  getMyAttendanceHandler,
+  getMyCreditTransactionsHandler,
+} from '../controllers/attendanceController';
 
 const router = Router();
 
@@ -13,5 +16,6 @@ router.use((req, _res, next) => {
 });
 
 router.get('/attendance/me', getMyAttendanceHandler);
+router.get('/credits/me', getMyCreditTransactionsHandler);
 
 export default router;

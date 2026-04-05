@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getMyMembershipHandler,
   addCreditsHandler,
+  getMembershipByIdHandler,
 } from '../controllers/membershipController';
 import { getMemberAttendanceHandler } from '../controllers/attendanceController';
 
@@ -17,6 +18,7 @@ router.use((req, _res, next) => {
 });
 
 router.get('/memberships/me', getMyMembershipHandler);
+router.get('/memberships/:membershipId', getMembershipByIdHandler);
 router.post('/memberships/:membershipId/credits', addCreditsHandler);
 router.get('/memberships/:membershipId/attendance', getMemberAttendanceHandler);
 

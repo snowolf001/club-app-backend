@@ -18,11 +18,11 @@ SET name = EXCLUDED.name, email = EXCLUDED.email, updated_at = NOW();
 -- ============================================================
 -- CLUBS
 -- ============================================================
-INSERT INTO clubs (id, name, updated_at)
+INSERT INTO clubs (id, name, join_code, updated_at)
 VALUES
-  ('22222222-2222-2222-2222-222222222222', 'Demo Club', NOW())
+  ('22222222-2222-2222-2222-222222222222', 'Demo Club', 'DEMO01', NOW())
 ON CONFLICT (id) DO UPDATE
-SET name = EXCLUDED.name, updated_at = NOW();
+SET name = EXCLUDED.name, join_code = EXCLUDED.join_code, updated_at = NOW();
 
 -- ============================================================
 -- MEMBERSHIPS

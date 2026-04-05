@@ -138,6 +138,17 @@ export async function checkInToSession({
     await client.query('BEGIN');
 
     const session = await getSessionForCheckin(client, sessionId);
+
+    // Reject check-in if the session hasn't started yet
+    const startsAt = new Date(session.starts_at).getTime();
+    if (startsAt > Date.now()) {
+      throw new AppError(
+        409,
+        'SESSION_NOT_STARTED',
+        'This session has not started yet.'
+      );
+    }
+
     const membership = await getMembershipForUpdate(
       client,
       session.club_id,

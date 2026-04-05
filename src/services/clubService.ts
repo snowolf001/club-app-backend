@@ -1,6 +1,10 @@
 import { pool } from '../db/pool';
 import { AppError } from '../errors/AppError';
-import { nanoid } from 'nanoid';
+import { randomBytes } from 'crypto';
+
+function generateJoinCode(): string {
+  return randomBytes(4).toString('hex').toUpperCase(); // 8 hex chars
+}
 
 // ─── Row types ────────────────────────────────────────────────────────────────
 
@@ -197,17 +201,13 @@ export async function joinClub(
   }
   const clubId = clubResult.rows[0].id;
 
-  // Already a member?
-  const existing = await pool.query(
+  // Already a member? Return the existing membership instead of erroring.
+  const existing = await pool.query<{ id: string }>(
     `SELECT id FROM memberships WHERE club_id = $1 AND user_id = $2 LIMIT 1`,
     [clubId, userId]
   );
   if ((existing.rowCount ?? 0) > 0) {
-    throw new AppError(
-      409,
-      'ALREADY_MEMBER',
-      'You are already a member of this club.'
-    );
+    return { membershipId: existing.rows[0].id, clubId };
   }
 
   const result = await pool.query<{ id: string }>(
@@ -226,7 +226,7 @@ export async function createClub(
   if (!trimmed)
     throw new AppError(400, 'INVALID_NAME', 'Club name cannot be empty.');
 
-  const joinCode = nanoid(8).toUpperCase();
+  const joinCode = generateJoinCode();
 
   const clubResult = await pool.query<{ id: string }>(
     `INSERT INTO clubs (name, join_code) VALUES ($1, $2) RETURNING id`,

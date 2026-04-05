@@ -2,7 +2,11 @@ import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
 import { isValidUUID, isPositiveInteger } from '../utils/validators';
 import { getCurrentUserId } from '../lib/auth';
-import { getMyMembership, addCredits } from '../services/membershipService';
+import {
+  getMyMembership,
+  addCredits,
+  getMembershipById,
+} from '../services/membershipService';
 
 // ─── GET /api/memberships/me?clubId=... ───────────────────────────────────────
 
@@ -84,6 +88,31 @@ export async function addCreditsHandler(
     );
 
     res.json({ success: true, data: membership });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── GET /api/memberships/:membershipId ───────────────────────────────────────
+
+export async function getMembershipByIdHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const membershipId = req.params['membershipId'] as string;
+
+    if (!isValidUUID(membershipId)) {
+      throw new AppError(
+        400,
+        'INVALID_MEMBERSHIP_ID',
+        'membershipId must be a valid UUID.'
+      );
+    }
+
+    const result = await getMembershipById(membershipId);
+    res.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }

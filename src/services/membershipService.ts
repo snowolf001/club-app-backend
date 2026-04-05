@@ -60,6 +60,36 @@ export async function getMyMembership(
   return mapMembership(result.rows[0]);
 }
 
+export async function getMembershipById(membershipId: string): Promise<{
+  membership: MembershipItem;
+  club: { clubId: string; name: string; joinCode: string | null };
+}> {
+  const result = await pool.query<
+    MembershipRow & { club_name: string; club_join_code: string | null }
+  >(
+    `SELECT m.id, m.user_id, m.club_id, m.role, m.credits_remaining, m.status,
+            c.name AS club_name, c.join_code AS club_join_code
+     FROM memberships m
+     JOIN clubs c ON c.id = m.club_id
+     WHERE m.id = $1 LIMIT 1`,
+    [membershipId]
+  );
+
+  if ((result.rowCount ?? 0) === 0) {
+    throw new AppError(404, 'MEMBERSHIP_NOT_FOUND', 'Membership not found.');
+  }
+
+  const row = result.rows[0];
+  return {
+    membership: mapMembership(row),
+    club: {
+      clubId: row.club_id,
+      name: row.club_name,
+      joinCode: row.club_join_code,
+    },
+  };
+}
+
 export async function addCredits(
   membershipId: string,
   actorUserId: string,
@@ -122,11 +152,19 @@ export async function addCredits(
           amount,
           transaction_type,
           note,
+          actor_user_id,
           created_at
         )
-        VALUES ($1, $2, $3, NULL, NULL, $4, 'add', $5, NOW())
+        VALUES ($1, $2, $3, NULL, NULL, $4, 'add', $5, $6, NOW())
       `,
-      [membership.club_id, membershipId, membership.user_id, amount, reason]
+      [
+        membership.club_id,
+        membershipId,
+        membership.user_id,
+        amount,
+        reason,
+        actorUserId,
+      ]
     );
 
     await writeAuditLog(client, {

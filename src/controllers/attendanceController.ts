@@ -5,6 +5,7 @@ import { getCurrentUserId } from '../lib/auth';
 import {
   getAttendanceForUser,
   getAttendanceForMembership,
+  getCreditTransactionsForUser,
 } from '../services/attendanceService';
 
 // ─── GET /api/attendance/me ───────────────────────────────────────────────────
@@ -45,6 +46,23 @@ export async function getMemberAttendanceHandler(
     const attendance = await getAttendanceForMembership(membershipId);
 
     res.json({ success: true, data: attendance });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── GET /api/credits/me ──────────────────────────────────────────────────────
+
+export async function getMyCreditTransactionsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = getCurrentUserId(req);
+    const transactions = await getCreditTransactionsForUser(userId);
+
+    res.json({ success: true, data: transactions });
   } catch (error) {
     next(error);
   }
