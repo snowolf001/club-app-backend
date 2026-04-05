@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
 import { isValidUUID } from '../utils/validators';
+import { getCurrentUserId } from '../lib/auth';
+import { pool } from '../db/pool';
 import { getAuditLogs } from '../services/auditLogService';
 
 const DEFAULT_LIMIT = 50;
@@ -30,6 +32,17 @@ export async function getAuditLogsHandler(
         'INVALID_CLUB_ID',
         'clubId must be a valid UUID.'
       );
+    }
+
+    // Admin-only: verify caller is admin or owner
+    const actorId = getCurrentUserId(req);
+    const memberRow = await pool.query<{ role: string }>(
+      `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 LIMIT 1`,
+      [actorId, clubId]
+    );
+    const role = memberRow.rows[0]?.role;
+    if (!role || !['admin', 'owner'].includes(role)) {
+      throw new AppError(403, 'FORBIDDEN', 'Only admins can view audit logs.');
     }
 
     const rawLimit = parseInt(String(req.query['limit'] ?? DEFAULT_LIMIT), 10);

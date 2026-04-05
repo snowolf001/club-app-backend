@@ -183,7 +183,7 @@ export async function addCredits(
       targetUserId: membership.user_id,
       entityType: 'membership',
       entityId: membershipId,
-      action: 'add_credits',
+      action: 'credits_added',
       metadata: { amount, reason, previousCredits, newCredits },
     });
 

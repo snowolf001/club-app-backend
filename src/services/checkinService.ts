@@ -2,6 +2,7 @@ import { PoolClient } from 'pg';
 import { pool } from '../db/pool';
 import { AppError } from '../errors/AppError';
 import { logger } from '../lib/logger';
+import { writeAuditLog } from './auditLogService';
 
 type CheckInParams = {
   sessionId: string;
@@ -200,15 +201,24 @@ export async function checkInToSession({
             user_id,
             membership_id,
             check_in_method,
+            checked_in_by_user_id,
             credits_used,
             checked_in_at,
             created_at,
             updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), NOW())
+          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), NOW())
           RETURNING id, checked_in_at
         `,
-        [sessionId, session.club_id, userId, membership.id, 'self', creditsUsed]
+        [
+          sessionId,
+          session.club_id,
+          userId,
+          membership.id,
+          'self',
+          userId,
+          creditsUsed,
+        ]
       );
 
       attendance = attendanceResult.rows[0];
@@ -250,37 +260,23 @@ export async function checkInToSession({
       ]
     );
 
-    await client.query(
-      `
-        INSERT INTO audit_logs (
-          club_id,
-          actor_user_id,
-          target_user_id,
-          entity_type,
-          entity_id,
-          action,
-          metadata,
-          created_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW())
-      `,
-      [
-        session.club_id,
-        userId,
-        userId,
-        'attendance',
-        attendance.id,
-        'session_checkin',
-        JSON.stringify({
-          sessionId,
-          membershipId: membership.id,
-          creditsUsed,
-          creditDelta: -creditsUsed,
-          remainingCredits,
-          method: 'self',
-        }),
-      ]
-    );
+    await writeAuditLog(client, {
+      clubId: session.club_id,
+      actorUserId: userId,
+      targetUserId: userId,
+      entityType: 'attendance',
+      entityId: attendance.id,
+      sessionId,
+      action: 'member_checked_in',
+      metadata: {
+        sessionId,
+        membershipId: membership.id,
+        creditsUsed,
+        creditDelta: -creditsUsed,
+        remainingCredits,
+        checkInType: 'live',
+      },
+    });
 
     await client.query('COMMIT');
 
@@ -395,13 +391,14 @@ export async function manualCheckInToSession({
     let attendance: AttendanceRow;
     try {
       const attendanceResult = await client.query<AttendanceRow>(
-        `INSERT INTO attendances (session_id, club_id, user_id, membership_id, check_in_method, credits_used, checked_in_at, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, 'manual', $5, NOW(), NOW(), NOW()) RETURNING id, checked_in_at`,
+        `INSERT INTO attendances (session_id, club_id, user_id, membership_id, check_in_method, checked_in_by_user_id, credits_used, checked_in_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'manual', $5, $6, NOW(), NOW(), NOW()) RETURNING id, checked_in_at`,
         [
           sessionId,
           session.club_id,
           membership.user_id,
           membership.id,
+          actorUserId,
           creditsUsed,
         ]
       );
@@ -430,23 +427,22 @@ export async function manualCheckInToSession({
       ]
     );
 
-    await client.query(
-      `INSERT INTO audit_logs (club_id, actor_user_id, target_user_id, entity_type, entity_id, action, metadata, created_at)
-       VALUES ($1, $2, $3, 'attendance', $4, 'manual_checkin', $5::jsonb, NOW())`,
-      [
-        session.club_id,
-        actorUserId,
-        membership.user_id,
-        attendance.id,
-        JSON.stringify({
-          sessionId,
-          membershipId: membership.id,
-          creditsUsed,
-          remainingCredits,
-          method: 'manual',
-        }),
-      ]
-    );
+    await writeAuditLog(client, {
+      clubId: session.club_id,
+      actorUserId,
+      targetUserId: membership.user_id,
+      entityType: 'attendance',
+      entityId: attendance.id,
+      sessionId,
+      action: 'member_checked_in',
+      metadata: {
+        sessionId,
+        membershipId: membership.id,
+        creditsUsed,
+        remainingCredits,
+        checkInType: 'manual',
+      },
+    });
 
     await client.query('COMMIT');
 

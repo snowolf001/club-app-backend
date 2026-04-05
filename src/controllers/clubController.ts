@@ -3,6 +3,7 @@ import { AppError } from '../errors/AppError';
 import { isValidUUID } from '../utils/validators';
 import { getCurrentUserId } from '../lib/auth';
 import { pool } from '../db/pool';
+import { createAuditLog } from '../services/auditLogService';
 import {
   getClub,
   getClubSettings,
@@ -90,6 +91,16 @@ export async function updateClubSettingsHandler(
       hostBackfillHours:
         typeof hostBackfillHours === 'number' ? hostBackfillHours : undefined,
     });
+
+    void createAuditLog({
+      clubId,
+      actorUserId: getCurrentUserId(req),
+      entityType: 'club',
+      entityId: clubId,
+      action: 'club_settings_updated',
+      metadata: { allowMemberBackfill, memberBackfillHours, hostBackfillHours },
+    });
+
     res.json({ success: true, data: settings });
   } catch (error) {
     next(error);
@@ -179,6 +190,16 @@ export async function addClubLocationHandler(
       name.trim(),
       typeof address === 'string' ? address.trim() : ''
     );
+
+    void createAuditLog({
+      clubId,
+      actorUserId: userId,
+      entityType: 'location',
+      entityId: location.id,
+      action: 'location_created',
+      metadata: { name: location.name, address: location.address },
+    });
+
     res.status(201).json({ success: true, data: location });
   } catch (error) {
     next(error);

@@ -3,6 +3,7 @@ import { AppError } from '../errors/AppError';
 import { isValidUUID } from '../utils/validators';
 import { getCurrentUserId } from '../lib/auth';
 import { pool } from '../db/pool';
+import { createAuditLog } from '../services/auditLogService';
 import {
   checkInToSession,
   manualCheckInToSession,
@@ -222,6 +223,22 @@ export async function createSessionHandler(
       locationId,
       startTime,
       endTime: typeof endTime === 'string' ? endTime : null,
+    });
+
+    void createAuditLog({
+      clubId,
+      actorUserId: getCurrentUserId(req),
+      entityType: 'session',
+      entityId: session.id,
+      sessionId: session.id,
+      action: 'session_created',
+      metadata: {
+        title: session.title,
+        locationId: session.locationId,
+        locationName: session.locationName,
+        startsAt: session.startTime,
+        endsAt: session.endTime,
+      },
     });
 
     res.status(201).json({ success: true, data: session });
