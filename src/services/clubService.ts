@@ -6,6 +6,24 @@ function generateJoinCode(): string {
   return randomBytes(4).toString('hex').toUpperCase(); // 8 hex chars
 }
 
+function generateRecoveryCode(): string {
+  // Format: XXXX-XXXX-XXXX (12 uppercase hex chars in 3 groups)
+  const hex = randomBytes(6).toString('hex').toUpperCase();
+  return `${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}`;
+}
+
+function toTitleCase(str: string): string {
+  return str
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function normalizePart(str: string): string {
+  return str.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 // ─── Row types ────────────────────────────────────────────────────────────────
 
 type ClubRow = {
@@ -203,31 +221,42 @@ export async function joinClub(
   }
   const clubId = clubResult.rows[0].id;
 
-  // Already a member? Return the existing membership instead of erroring.
+  // Normalize name regardless of whether this is a new or returning member.
+  const fullName = `${toTitleCase(firstName)} ${toTitleCase(lastName)}`;
+
+  // Already a member? Update their name and return the existing membership.
   const existing = await pool.query<{ id: string }>(
     `SELECT id FROM memberships WHERE club_id = $1 AND user_id = $2 LIMIT 1`,
     [clubId, userId]
   );
   if ((existing.rowCount ?? 0) > 0) {
+    await pool.query(
+      `UPDATE users SET name = $1, updated_at = NOW() WHERE id = $2`,
+      [fullName, userId]
+    );
     return { membershipId: existing.rows[0].id, clubId };
   }
 
-  // Duplicate name check: no other active member in this club with the same full name.
-  const fullName = `${firstName} ${lastName}`;
+  // Duplicate name check: block if any member in this club shares the same
+  // normalized first + last name. Name matching is ONLY for conflict detection —
+  // never for identity confirmation. Recovery code is the only restore path.
+  const normFirst = normalizePart(firstName);
+  const normLast = normalizePart(lastName);
+  const normFull = `${normFirst} ${normLast}`;
   const duplicate = await pool.query<{ id: string }>(
     `SELECT m.id FROM memberships m
      JOIN users u ON u.id = m.user_id
      WHERE m.club_id = $1
        AND m.user_id <> $2
-       AND LOWER(u.name) = LOWER($3)
+       AND LOWER(REGEXP_REPLACE(TRIM(u.name), '\\s+', ' ', 'g')) = $3
      LIMIT 1`,
-    [clubId, userId, fullName]
+    [clubId, userId, normFull]
   );
   if ((duplicate.rowCount ?? 0) > 0) {
     throw new AppError(
       409,
-      'DUPLICATE_NAME',
-      `A member named "${fullName}" already exists in this club. Please use a different name.`
+      'POSSIBLE_EXISTING_MEMBER',
+      'A member with this name may already exist in this club. Please use your recovery code instead.'
     );
   }
 
@@ -237,10 +266,11 @@ export async function joinClub(
     [fullName, userId]
   );
 
+  const recoveryCode = generateRecoveryCode();
   const result = await pool.query<{ id: string }>(
-    `INSERT INTO memberships (club_id, user_id, role, status, credits_remaining)
-     VALUES ($1, $2, 'member', 'active', 0) RETURNING id`,
-    [clubId, userId]
+    `INSERT INTO memberships (club_id, user_id, role, status, credits_remaining, recovery_code)
+     VALUES ($1, $2, 'member', 'active', 0, $3) RETURNING id`,
+    [clubId, userId, recoveryCode]
   );
   return { membershipId: result.rows[0].id, clubId };
 }
@@ -261,10 +291,11 @@ export async function createClub(
   );
   const clubId = clubResult.rows[0].id;
 
+  const recoveryCode = generateRecoveryCode();
   const memberResult = await pool.query<{ id: string }>(
-    `INSERT INTO memberships (club_id, user_id, role, status, credits_remaining)
-     VALUES ($1, $2, 'owner', 'active', 0) RETURNING id`,
-    [clubId, userId]
+    `INSERT INTO memberships (club_id, user_id, role, status, credits_remaining, recovery_code)
+     VALUES ($1, $2, 'owner', 'active', 0, $3) RETURNING id`,
+    [clubId, userId, recoveryCode]
   );
   return { membershipId: memberResult.rows[0].id, clubId };
 }

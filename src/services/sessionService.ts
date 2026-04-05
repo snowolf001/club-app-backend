@@ -6,10 +6,12 @@ import { AppError } from '../errors/AppError';
 type SessionRow = {
   id: string;
   club_id: string;
-  title: string;
+  title: string | null;
   starts_at: string;
   ends_at: string | null;
   created_at: string;
+  location_id: string | null;
+  location_name: string | null;
 };
 
 type CheckedInRow = {
@@ -26,10 +28,12 @@ type CheckedInRow = {
 export type SessionItem = {
   id: string;
   clubId: string;
-  title: string;
+  title: string | null;
   startTime: string;
   endTime: string | null;
   createdAt: string;
+  locationId: string | null;
+  locationName: string | null;
 };
 
 export type CheckedInMember = {
@@ -51,12 +55,16 @@ function mapSessionRow(row: SessionRow): SessionItem {
     startTime: row.starts_at,
     endTime: row.ends_at,
     createdAt: row.created_at,
+    locationId: row.location_id,
+    locationName: row.location_name,
   };
 }
 
 const SESSION_SELECT = `
-  SELECT id, club_id, title, starts_at, ends_at, created_at
-  FROM sessions
+  SELECT s.id, s.club_id, s.title, s.starts_at, s.ends_at, s.created_at,
+         s.location_id, cl.name AS location_name
+  FROM sessions s
+  LEFT JOIN club_locations cl ON cl.id = s.location_id
 `;
 
 // ─── Exported functions ───────────────────────────────────────────────────────
@@ -66,8 +74,8 @@ export async function getSessionsByClub(
 ): Promise<SessionItem[]> {
   const result = await pool.query<SessionRow>(
     `${SESSION_SELECT}
-     WHERE club_id = $1
-     ORDER BY starts_at ASC`,
+     WHERE s.club_id = $1
+     ORDER BY s.starts_at ASC`,
     [clubId]
   );
 
@@ -77,7 +85,7 @@ export async function getSessionsByClub(
 export async function getSessionById(sessionId: string): Promise<SessionItem> {
   const result = await pool.query<SessionRow>(
     `${SESSION_SELECT}
-     WHERE id = $1
+     WHERE s.id = $1
      LIMIT 1`,
     [sessionId]
   );
@@ -122,15 +130,22 @@ export async function getCheckedInMembers(
 
 export async function createSession(params: {
   clubId: string;
-  title: string;
+  title?: string | null;
+  locationId: string;
   startTime: string;
   endTime?: string | null;
 }): Promise<SessionItem> {
-  const { clubId, title, startTime, endTime } = params;
-  const result = await pool.query<SessionRow>(
-    `INSERT INTO sessions (club_id, title, starts_at, ends_at)
-     VALUES ($1, $2, $3, $4) RETURNING id, club_id, title, starts_at, ends_at, created_at`,
-    [clubId, title.trim(), startTime, endTime ?? null]
+  const { clubId, title, locationId, startTime, endTime } = params;
+  const result = await pool.query<{ id: string }>(
+    `INSERT INTO sessions (club_id, title, location_id, starts_at, ends_at)
+     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [
+      clubId,
+      title ? title.trim() : null,
+      locationId,
+      startTime,
+      endTime ?? null,
+    ]
   );
-  return mapSessionRow(result.rows[0]);
+  return getSessionById(result.rows[0].id);
 }

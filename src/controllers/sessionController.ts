@@ -160,10 +160,8 @@ export async function createSessionHandler(
   next: NextFunction
 ): Promise<void> {
   try {
-    const { clubId, title, startTime, endTime } = req.body as Record<
-      string,
-      unknown
-    >;
+    const { clubId, title, locationId, startTime, endTime } =
+      req.body as Record<string, unknown>;
 
     if (typeof clubId !== 'string' || !isValidUUID(clubId)) {
       throw new AppError(
@@ -172,8 +170,24 @@ export async function createSessionHandler(
         'clubId must be a valid UUID.'
       );
     }
-    if (typeof title !== 'string' || !title.trim()) {
-      throw new AppError(400, 'INVALID_TITLE', 'title is required.');
+    if (typeof locationId !== 'string' || !isValidUUID(locationId)) {
+      throw new AppError(
+        400,
+        'INVALID_LOCATION_ID',
+        'locationId must be a valid UUID.'
+      );
+    }
+    // title is optional; if provided it must be non-empty
+    if (
+      title !== undefined &&
+      title !== null &&
+      (typeof title !== 'string' || !title.trim())
+    ) {
+      throw new AppError(
+        400,
+        'INVALID_TITLE',
+        'title must be a non-empty string if provided.'
+      );
     }
     if (typeof startTime !== 'string' || !startTime) {
       throw new AppError(400, 'INVALID_START_TIME', 'startTime is required.');
@@ -181,7 +195,8 @@ export async function createSessionHandler(
 
     const session = await createSession({
       clubId,
-      title: title.trim(),
+      title: typeof title === 'string' ? title.trim() : null,
+      locationId,
       startTime,
       endTime: typeof endTime === 'string' ? endTime : null,
     });
