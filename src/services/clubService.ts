@@ -256,7 +256,7 @@ export async function joinClub(
     throw new AppError(
       409,
       'POSSIBLE_EXISTING_MEMBER',
-      'A member with this name may already exist in this club. Please use your recovery code instead.'
+      'A member with this name already exists in this club. If you joined before, use your recovery code to restore your membership, or ask the host/admin for your recovery code. Otherwise, join with a different name.'
     );
   }
 

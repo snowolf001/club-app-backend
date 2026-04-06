@@ -46,8 +46,9 @@ export type SessionAttendeesResult = {
   };
   attendees: SessionAttendeeItem[];
   summary: {
-    totalAttendees: number;
-    totalCreditsUsed: number;
+    totalCheckIns: number;
+    totalParticipation: number;
+    uniqueMembers: number;
   };
 };
 
@@ -105,7 +106,11 @@ export async function getSessionAttendees(
     checkedInByName: row.checked_in_by_name,
   }));
 
-  const totalCreditsUsed = attendees.reduce((sum, a) => sum + a.creditsUsed, 0);
+  const totalParticipation = attendees.reduce(
+    (sum, a) => sum + a.creditsUsed,
+    0
+  );
+  const uniqueMembers = new Set(attendees.map((a) => a.memberId)).size;
 
   return {
     session: {
@@ -119,8 +124,9 @@ export async function getSessionAttendees(
     },
     attendees,
     summary: {
-      totalAttendees: attendees.length,
-      totalCreditsUsed,
+      totalCheckIns: attendees.length,
+      totalParticipation,
+      uniqueMembers,
     },
   };
 }
@@ -162,7 +168,7 @@ export type MemberHistoryResult = {
   items: MemberHistoryItem[];
   summary: {
     totalAttendances: number;
-    totalCreditsUsed: number;
+    totalParticipation: number;
   };
 };
 
@@ -241,7 +247,7 @@ export async function getMemberHistory(params: {
     checkedInByName: row.checked_in_by_name,
   }));
 
-  const totalCreditsUsed = items.reduce((sum, i) => sum + i.creditsUsed, 0);
+  const totalParticipation = items.reduce((sum, i) => sum + i.creditsUsed, 0);
 
   return {
     member: {
@@ -252,7 +258,7 @@ export async function getMemberHistory(params: {
     items,
     summary: {
       totalAttendances: items.length,
-      totalCreditsUsed,
+      totalParticipation,
     },
   };
 }
@@ -290,10 +296,10 @@ export type AttendanceReportItem = {
 export type AttendanceReportResult = {
   items: AttendanceReportItem[];
   summary: {
-    totalAttendances: number;
-    totalCreditsUsed: number;
+    totalCheckIns: number;
+    totalParticipation: number;
     uniqueMembers: number;
-    uniqueSessions: number;
+    totalSessions: number;
   };
 };
 
@@ -384,16 +390,16 @@ export async function getAttendanceReport(params: {
   }));
 
   const uniqueMembers = new Set(items.map((i) => i.memberId)).size;
-  const uniqueSessions = new Set(items.map((i) => i.sessionId)).size;
-  const totalCreditsUsed = items.reduce((sum, i) => sum + i.creditsUsed, 0);
+  const totalSessions = new Set(items.map((i) => i.sessionId)).size;
+  const totalParticipation = items.reduce((sum, i) => sum + i.creditsUsed, 0);
 
   return {
     items,
     summary: {
-      totalAttendances: items.length,
-      totalCreditsUsed,
+      totalCheckIns: items.length,
+      totalParticipation,
       uniqueMembers,
-      uniqueSessions,
+      totalSessions,
     },
   };
 }
@@ -428,8 +434,8 @@ export type SessionBreakdownItem = {
   locationName: string | null;
   startsAt: string;
   endsAt: string | null;
-  attendeeCount: number;
-  totalCreditsUsed: number;
+  totalCheckIns: number;
+  totalParticipation: number;
   attendees: SessionAttendeeItem[];
 };
 
@@ -437,9 +443,9 @@ export type SessionsBreakdownResult = {
   sessions: SessionBreakdownItem[];
   summary: {
     totalSessions: number;
-    totalAttendances: number;
-    totalUniqueMembers: number;
-    totalCreditsUsed: number;
+    totalCheckIns: number;
+    uniqueMembers: number;
+    totalParticipation: number;
   };
 };
 
@@ -497,9 +503,9 @@ export async function getSessionsBreakdown(params: {
       sessions: [],
       summary: {
         totalSessions: 0,
-        totalAttendances: 0,
-        totalUniqueMembers: 0,
-        totalCreditsUsed: 0,
+        totalCheckIns: 0,
+        uniqueMembers: 0,
+        totalParticipation: 0,
       },
     };
   }
@@ -551,14 +557,14 @@ export async function getSessionsBreakdown(params: {
     locationName: row.location_name,
     startsAt: row.starts_at,
     endsAt: row.ends_at,
-    attendeeCount: parseInt(row.attendee_count, 10),
-    totalCreditsUsed: parseFloat(row.total_credits_used),
+    totalCheckIns: parseInt(row.attendee_count, 10),
+    totalParticipation: parseFloat(row.total_credits_used),
     attendees: attendeesBySession.get(row.session_id) ?? [],
   }));
 
   const allRows = attendeesResult.rows;
-  const totalUniqueMembers = new Set(allRows.map((a) => a.membership_id)).size;
-  const totalCreditsUsed = allRows.reduce(
+  const uniqueMembers = new Set(allRows.map((a) => a.membership_id)).size;
+  const totalParticipation = allRows.reduce(
     (sum, a) => sum + Number(a.credits_used),
     0
   );
@@ -567,9 +573,9 @@ export async function getSessionsBreakdown(params: {
     sessions,
     summary: {
       totalSessions: sessions.length,
-      totalAttendances: allRows.length,
-      totalUniqueMembers,
-      totalCreditsUsed,
+      totalCheckIns: allRows.length,
+      uniqueMembers,
+      totalParticipation,
     },
   };
 }
