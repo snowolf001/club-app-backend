@@ -1,12 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
-import { isValidUUID, isPositiveInteger } from '../utils/validators';
+import { isValidUUID } from '../utils/validators';
 import { getCurrentUserId } from '../lib/auth';
 import {
   getMyMembership,
   addCredits,
   getMembershipById,
+  updateMemberRole,
 } from '../services/membershipService';
+import { isNonZeroInteger } from '../utils/validators';
 
 // ─── GET /api/memberships/me?clubId=... ───────────────────────────────────────
 
@@ -64,11 +66,11 @@ export async function addCreditsHandler(
 
     const { amount, reason } = req.body ?? {};
 
-    if (!isPositiveInteger(amount)) {
+    if (!isNonZeroInteger(amount)) {
       throw new AppError(
         400,
         'INVALID_REQUEST_BODY',
-        'amount must be a positive integer.'
+        'amount must be a non-zero integer (positive to add, negative to deduct).'
       );
     }
 
@@ -113,6 +115,42 @@ export async function getMembershipByIdHandler(
 
     const result = await getMembershipById(membershipId);
     res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── PATCH /api/memberships/:membershipId/role ────────────────────────────────
+
+export async function updateMemberRoleHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const actorUserId = getCurrentUserId(req);
+    const membershipId = req.params['membershipId'] as string;
+
+    if (!isValidUUID(membershipId)) {
+      throw new AppError(
+        400,
+        'INVALID_MEMBERSHIP_ID',
+        'membershipId must be a valid UUID.'
+      );
+    }
+
+    const { role } = req.body ?? {};
+
+    if (role !== 'member' && role !== 'host') {
+      throw new AppError(
+        400,
+        'INVALID_ROLE',
+        'role must be either "member" or "host".'
+      );
+    }
+
+    const membership = await updateMemberRole(membershipId, actorUserId, role);
+    res.json({ success: true, data: membership });
   } catch (error) {
     next(error);
   }

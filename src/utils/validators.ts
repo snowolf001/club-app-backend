@@ -8,3 +8,7 @@ export function isValidUUID(value: string): boolean {
 export function isPositiveInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1;
 }
+
+export function isNonZeroInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value !== 0;
+}

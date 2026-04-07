@@ -165,7 +165,7 @@ export async function addCredits(
           actor_user_id,
           created_at
         )
-        VALUES ($1, $2, $3, NULL, NULL, $4, 'add', $5, $6, NOW())
+        VALUES ($1, $2, $3, NULL, NULL, $4, $7, $5, $6, NOW())
       `,
       [
         membership.club_id,
@@ -174,6 +174,7 @@ export async function addCredits(
         amount,
         reason,
         actorUserId,
+        amount > 0 ? 'add' : 'remove',
       ]
     );
 
@@ -183,7 +184,7 @@ export async function addCredits(
       targetUserId: membership.user_id,
       entityType: 'membership',
       entityId: membershipId,
-      action: 'credits_added',
+      action: amount > 0 ? 'credits_added' : 'credits_removed',
       metadata: { amount, reason, previousCredits, newCredits },
     });
 
@@ -205,6 +206,116 @@ export async function addCredits(
       await client.query('ROLLBACK');
     } catch (rbErr) {
       logger.error('addCredits rollback failed', {
+        error: rbErr instanceof Error ? rbErr.message : String(rbErr),
+      });
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// ─── Update member role ───────────────────────────────────────────────────────
+
+export async function updateMemberRole(
+  membershipId: string,
+  actorUserId: string,
+  newRole: 'member' | 'host'
+): Promise<MembershipItem> {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Load the target membership
+    const targetResult = await client.query<MembershipRow>(
+      `SELECT m.id, m.user_id, m.club_id, m.role, m.credits_remaining, m.status,
+              m.recovery_code, u.name AS user_name
+       FROM memberships m
+       JOIN users u ON u.id = m.user_id
+       WHERE m.id = $1 LIMIT 1 FOR UPDATE`,
+      [membershipId]
+    );
+
+    if ((targetResult.rowCount ?? 0) === 0) {
+      throw new AppError(404, 'MEMBERSHIP_NOT_FOUND', 'Membership not found.');
+    }
+
+    const target = targetResult.rows[0];
+
+    if (target.status !== 'active') {
+      throw new AppError(
+        403,
+        'MEMBERSHIP_INACTIVE',
+        'Membership is not active.'
+      );
+    }
+
+    // Owners cannot be demoted
+    if (target.role === 'owner') {
+      throw new AppError(
+        403,
+        'CANNOT_CHANGE_OWNER',
+        'Owner role cannot be changed.'
+      );
+    }
+
+    // Verify actor has permission (must be admin or owner in the same club)
+    const actorResult = await client.query<{ role: string; id: string }>(
+      `SELECT id, role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+      [actorUserId, target.club_id]
+    );
+
+    const actorRole = actorResult.rows[0]?.role;
+    if (!actorRole || !['admin', 'owner'].includes(actorRole)) {
+      throw new AppError(
+        403,
+        'FORBIDDEN',
+        'Only admins can change member roles.'
+      );
+    }
+
+    // Prevent self-change
+    if (actorResult.rows[0]?.id === membershipId) {
+      throw new AppError(
+        403,
+        'CANNOT_CHANGE_OWN_ROLE',
+        'You cannot change your own role.'
+      );
+    }
+
+    const previousRole = target.role;
+
+    await client.query(
+      `UPDATE memberships SET role = $2, updated_at = NOW() WHERE id = $1`,
+      [membershipId, newRole]
+    );
+
+    await writeAuditLog(client, {
+      clubId: target.club_id,
+      actorUserId,
+      targetUserId: target.user_id,
+      entityType: 'membership',
+      entityId: membershipId,
+      action: 'role_changed',
+      metadata: { previousRole, newRole },
+    });
+
+    await client.query('COMMIT');
+
+    logger.info('role changed', {
+      membershipId,
+      actorUserId,
+      previousRole,
+      newRole,
+    });
+
+    return mapMembership({ ...target, role: newRole });
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rbErr) {
+      logger.error('updateMemberRole rollback failed', {
         error: rbErr instanceof Error ? rbErr.message : String(rbErr),
       });
     }
