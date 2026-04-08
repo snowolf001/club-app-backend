@@ -440,3 +440,48 @@ export async function leaveClubHandler(
     next(error);
   }
 }
+
+// ─── POST /api/clubs/:clubId/recover ─────────────────────────────────────────
+
+export async function recoverClubMembershipHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const clubId = req.params['clubId'] as string;
+    if (!isValidUUID(clubId)) {
+      throw new AppError(
+        400,
+        'INVALID_CLUB_ID',
+        'clubId must be a valid UUID.'
+      );
+    }
+    const { displayName, recoveryCode } = req.body as {
+      displayName?: unknown;
+      recoveryCode?: unknown;
+    };
+    if (typeof displayName !== 'string' || !displayName.trim()) {
+      throw new AppError(
+        400,
+        'INVALID_REQUEST_BODY',
+        'displayName is required.'
+      );
+    }
+    if (typeof recoveryCode !== 'string' || !recoveryCode.trim()) {
+      throw new AppError(
+        400,
+        'INVALID_REQUEST_BODY',
+        'recoveryCode is required.'
+      );
+    }
+    const result = await recoverMemberByDisplayName(
+      clubId,
+      displayName.trim(),
+      recoveryCode.trim()
+    );
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+}

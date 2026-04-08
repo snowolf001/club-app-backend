@@ -18,6 +18,15 @@ import {
 
 const router = Router();
 
+// Temporary auth stub — replace with real middleware before production.
+router.use((req, _res, next) => {
+  req.user = {
+    id: '11111111-1111-1111-1111-111111111111',
+    role: 'member',
+  };
+  next();
+});
+
 // No auth required — clubs are looked up by ID during onboarding/bootstrap.
 router.get('/clubs/:clubId', getClubHandler);
 
