@@ -31,9 +31,10 @@ export function errorHandler(
   }
 
   // Unexpected errors — log full stack so we can debug
+  const message = err instanceof Error ? err.message : String(err);
   const stack = err instanceof Error ? err.stack : String(err);
   logger.error('unhandled error', {
-    message: err instanceof Error ? err.message : String(err),
+    message,
     stack,
     method: req.method,
     path: req.path,
@@ -43,7 +44,11 @@ export function errorHandler(
     success: false,
     error: {
       code: 'INTERNAL_SERVER_ERROR',
-      message: 'An unexpected error occurred.',
+      // Include the raw error message in non-production to aid debugging.
+      message:
+        process.env.NODE_ENV === 'production'
+          ? 'An unexpected error occurred.'
+          : message,
     },
   });
 }

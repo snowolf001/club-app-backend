@@ -2,6 +2,7 @@ import { pool } from '../db/pool';
 import { AppError } from '../errors/AppError';
 import { randomBytes } from 'crypto';
 import { writeAuditLog, createAuditLog } from './auditLogService';
+import { logger } from '../lib/logger';
 
 function generateJoinCode(): string {
   return randomBytes(4).toString('hex').toUpperCase(); // 8 hex chars
@@ -324,6 +325,8 @@ export async function createClub(
   if (!trimmed)
     throw new AppError(400, 'INVALID_NAME', 'Club name cannot be empty.');
 
+  logger.info('[createClub] start', { userId, name: trimmed });
+
   const joinCode = generateJoinCode();
 
   // Ensure a users row exists for this userId before any FK-dependent inserts.
@@ -332,14 +335,19 @@ export async function createClub(
     `SELECT name FROM users WHERE id = $1 LIMIT 1`,
     [userId]
   );
+  logger.info('[createClub] existingUser query done', {
+    found: (existingUser.rowCount ?? 0) > 0,
+  });
   const ownerDisplayName = existingUser.rows[0]?.name ?? trimmed;
   await ensureUserExists(userId, ownerDisplayName);
+  logger.info('[createClub] ensureUserExists done', { ownerDisplayName });
 
   const clubResult = await pool.query<{ id: string }>(
     `INSERT INTO clubs (name, join_code) VALUES ($1, $2) RETURNING id`,
     [trimmed, joinCode]
   );
   const clubId = clubResult.rows[0].id;
+  logger.info('[createClub] club inserted', { clubId });
 
   const recoveryCode = generateRecoveryCode();
   const memberResult = await pool.query<{ id: string }>(
@@ -347,6 +355,9 @@ export async function createClub(
      VALUES ($1, $2, 'owner', 'active', 0, $3, $4) RETURNING id`,
     [clubId, userId, recoveryCode, ownerDisplayName]
   );
+  logger.info('[createClub] membership inserted', {
+    membershipId: memberResult.rows[0].id,
+  });
   return { membershipId: memberResult.rows[0].id, clubId };
 }
 
