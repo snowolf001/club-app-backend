@@ -6,6 +6,7 @@ import {
   getCheckedInHandler,
   createSessionHandler,
   postManualCheckIn,
+  deleteSessionHandler,
 } from '../controllers/sessionController';
 
 const router = Router();
@@ -22,6 +23,7 @@ router.use((req, _res, next) => {
 router.get('/sessions', getSessionsHandler);
 router.get('/sessions/:sessionId', getSessionHandler);
 router.post('/sessions', createSessionHandler);
+router.delete('/sessions/:sessionId', deleteSessionHandler);
 router.post('/sessions/:sessionId/checkin', postSessionCheckIn);
 router.post('/sessions/:sessionId/checkin-manual', postManualCheckIn);
 router.get('/sessions/:sessionId/checked-in', getCheckedInHandler);

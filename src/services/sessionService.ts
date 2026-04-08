@@ -128,6 +128,23 @@ export async function getCheckedInMembers(
   }));
 }
 
+export async function deleteSession(sessionId: string): Promise<void> {
+  const countResult = await pool.query<{ count: string }>(
+    `SELECT COUNT(*) AS count FROM attendances WHERE session_id = $1`,
+    [sessionId]
+  );
+  const count = parseInt(countResult.rows[0].count, 10);
+  if (count > 0) {
+    throw new AppError(
+      409,
+      'SESSION_NOT_DELETABLE',
+      'This session cannot be deleted because it already has attendance records.'
+    );
+  }
+
+  await pool.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
+}
+
 export async function createSession(params: {
   clubId: string;
   title?: string | null;

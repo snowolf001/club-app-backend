@@ -6,8 +6,13 @@ import {
   getClubMembersHandler,
   getClubLocationsHandler,
   addClubLocationHandler,
+  deleteClubLocationHandler,
   joinClubHandler,
   createClubHandler,
+  regenerateJoinCodeHandler,
+  transferOwnershipHandler,
+  removeMemberHandler,
+  recoverClubMembershipHandler,
 } from '../controllers/clubController';
 
 const router = Router();
@@ -19,8 +24,16 @@ router.get('/clubs/:clubId', getClubHandler);
 router.get('/clubs/:clubId/settings', getClubSettingsHandler);
 router.patch('/clubs/:clubId/settings', updateClubSettingsHandler);
 router.get('/clubs/:clubId/members', getClubMembersHandler);
+router.delete('/clubs/:clubId/members/:membershipId', removeMemberHandler);
 router.get('/clubs/:clubId/locations', getClubLocationsHandler);
 router.post('/clubs/:clubId/locations', addClubLocationHandler);
+router.delete(
+  '/clubs/:clubId/locations/:locationId',
+  deleteClubLocationHandler
+);
+router.post('/clubs/:clubId/regenerate-join-code', regenerateJoinCodeHandler);
+router.post('/clubs/:clubId/transfer-ownership', transferOwnershipHandler);
+router.post('/clubs/:clubId/recover', recoverClubMembershipHandler);
 router.post('/clubs/join', joinClubHandler);
 router.post('/clubs', createClubHandler);
 

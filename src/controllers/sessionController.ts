@@ -13,6 +13,7 @@ import {
   getSessionById,
   getCheckedInMembers,
   createSession,
+  deleteSession,
 } from '../services/sessionService';
 
 // ─── GET /api/sessions?clubId=... ─────────────────────────────────────────────
@@ -313,6 +314,64 @@ export async function postManualCheckIn(
         checkedInAt: result.checkedInAt,
       },
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── DELETE /api/sessions/:sessionId ─────────────────────────────────────────
+
+export async function deleteSessionHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const sessionId = req.params['sessionId'] as string;
+    const userId = getCurrentUserId(req);
+
+    if (!isValidUUID(sessionId)) {
+      throw new AppError(
+        400,
+        'INVALID_SESSION_ID',
+        'sessionId must be a valid UUID.'
+      );
+    }
+
+    // Load session (also validates it exists)
+    const session = await getSessionById(sessionId);
+
+    // Check caller's membership role in the club
+    const memberRow = await pool.query<{ role: string }>(
+      `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+      [userId, session.clubId]
+    );
+    const role = memberRow.rows[0]?.role;
+    if (!role || !['owner', 'admin', 'host'].includes(role)) {
+      throw new AppError(
+        403,
+        'FORBIDDEN',
+        'Only owners, admins, and hosts can delete sessions.'
+      );
+    }
+
+    await deleteSession(sessionId);
+
+    void createAuditLog({
+      clubId: session.clubId,
+      actorUserId: userId,
+      entityType: 'session',
+      entityId: sessionId,
+      sessionId,
+      action: 'session_deleted',
+      metadata: {
+        title: session.title,
+        locationId: session.locationId,
+        locationName: session.locationName,
+      },
+    });
+
+    res.json({ success: true });
   } catch (error) {
     next(error);
   }

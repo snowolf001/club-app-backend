@@ -13,6 +13,7 @@ type MembershipRow = {
   credits_remaining: number;
   status: string;
   user_name: string;
+  display_name: string | null;
   recovery_code: string;
 };
 
@@ -21,6 +22,7 @@ export type MembershipItem = {
   clubId: string;
   userId: string;
   userName: string;
+  displayName: string;
   recoveryCode: string;
   role: string;
   credits: number;
@@ -30,11 +32,13 @@ export type MembershipItem = {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function mapMembership(row: MembershipRow): MembershipItem {
+  const displayName = row.display_name ?? row.user_name ?? '';
   return {
     membershipId: row.id,
     clubId: row.club_id,
     userId: row.user_id,
-    userName: row.user_name ?? '',
+    userName: displayName,
+    displayName,
     recoveryCode: row.recovery_code ?? '',
     role: row.role,
     credits: row.credits_remaining,
@@ -51,7 +55,7 @@ export async function getMyMembership(
   const result = await pool.query<MembershipRow>(
     `
       SELECT m.id, m.user_id, m.club_id, m.role, m.credits_remaining, m.status,
-             m.recovery_code, u.name AS user_name
+             m.recovery_code, m.display_name, u.name AS user_name
       FROM memberships m
       JOIN users u ON u.id = m.user_id
       WHERE m.club_id = $1
@@ -76,7 +80,7 @@ export async function getMembershipById(membershipId: string): Promise<{
     MembershipRow & { club_name: string; club_join_code: string | null }
   >(
     `SELECT m.id, m.user_id, m.club_id, m.role, m.credits_remaining, m.status,
-            m.recovery_code, u.name AS user_name,
+            m.recovery_code, m.display_name, u.name AS user_name,
             c.name AS club_name, c.join_code AS club_join_code
      FROM memberships m
      JOIN clubs c ON c.id = m.club_id
@@ -110,7 +114,7 @@ export async function getMembershipByRecoveryCode(
     MembershipRow & { club_name: string; club_join_code: string | null }
   >(
     `SELECT m.id, m.user_id, m.club_id, m.role, m.credits_remaining, m.status,
-            m.recovery_code, u.name AS user_name,
+            m.recovery_code, m.display_name, u.name AS user_name,
             c.name AS club_name, c.join_code AS club_join_code
      FROM memberships m
      JOIN clubs c ON c.id = m.club_id
@@ -128,6 +132,15 @@ export async function getMembershipByRecoveryCode(
   }
 
   const row = result.rows[0];
+
+  // Reactivate membership if it was removed
+  if (row.status !== 'active') {
+    await pool.query(
+      `UPDATE memberships SET status = 'active', updated_at = NOW() WHERE id = $1`,
+      [row.id]
+    );
+  }
+
   return {
     membership: mapMembership(row),
     club: {
@@ -266,7 +279,7 @@ export async function addCredits(
 export async function updateMemberRole(
   membershipId: string,
   actorUserId: string,
-  newRole: 'member' | 'host'
+  newRole: 'member' | 'host' | 'admin'
 ): Promise<MembershipItem> {
   const client = await pool.connect();
 
@@ -318,6 +331,26 @@ export async function updateMemberRole(
         403,
         'FORBIDDEN',
         'Only admins can change member roles.'
+      );
+    }
+
+    // Only owner can promote/demote admin
+    if (newRole === 'admin' && actorRole !== 'owner') {
+      throw new AppError(
+        403,
+        'FORBIDDEN',
+        'Only the owner can promote a member to admin.'
+      );
+    }
+    if (
+      target.role === 'admin' &&
+      newRole !== 'admin' &&
+      actorRole !== 'owner'
+    ) {
+      throw new AppError(
+        403,
+        'FORBIDDEN',
+        'Only the owner can demote an admin.'
       );
     }
 

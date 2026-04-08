@@ -1,6 +1,7 @@
 import { pool } from '../db/pool';
 import { AppError } from '../errors/AppError';
 import { randomBytes } from 'crypto';
+import { writeAuditLog, createAuditLog } from './auditLogService';
 
 function generateJoinCode(): string {
   return randomBytes(4).toString('hex').toUpperCase(); // 8 hex chars
@@ -46,6 +47,7 @@ type ClubMemberRow = {
   membership_id: string;
   user_id: string;
   user_name: string;
+  display_name: string;
   role: string;
   credits_remaining: number;
   status: string;
@@ -154,18 +156,19 @@ export async function updateClubSettings(
 
 export async function getClubMembers(clubId: string): Promise<ClubMember[]> {
   const result = await pool.query<ClubMemberRow>(
-    `SELECT m.id AS membership_id, m.user_id, u.name AS user_name,
-            m.role, m.credits_remaining, m.status
+    `SELECT m.id AS membership_id, m.user_id,
+            COALESCE(m.display_name, u.name) AS user_name,
+            m.display_name, m.role, m.credits_remaining, m.status
      FROM memberships m
      JOIN users u ON u.id = m.user_id
      WHERE m.club_id = $1
-     ORDER BY u.name`,
+     ORDER BY COALESCE(m.display_name, u.name)`,
     [clubId]
   );
   return result.rows.map((row) => ({
     membershipId: row.membership_id,
     userId: row.user_id,
-    userName: row.user_name,
+    userName: row.display_name ?? row.user_name,
     role: row.role,
     credits: row.credits_remaining,
     active: row.status === 'active',
@@ -206,6 +209,35 @@ export async function addClubLocation(
   };
 }
 
+export async function deleteClubLocation(
+  clubId: string,
+  locationId: string
+): Promise<void> {
+  // Verify location exists and belongs to this club
+  const locRow = await pool.query<{ id: string }>(
+    `SELECT id FROM club_locations WHERE id = $1 AND club_id = $2 LIMIT 1`,
+    [locationId, clubId]
+  );
+  if ((locRow.rowCount ?? 0) === 0) {
+    throw new AppError(404, 'LOCATION_NOT_FOUND', 'Location not found.');
+  }
+
+  // Prevent deletion if any session references this location
+  const sessionCount = await pool.query<{ count: string }>(
+    `SELECT COUNT(*) AS count FROM sessions WHERE location_id = $1`,
+    [locationId]
+  );
+  if (parseInt(sessionCount.rows[0].count, 10) > 0) {
+    throw new AppError(
+      409,
+      'LOCATION_NOT_DELETABLE',
+      'This location cannot be deleted because it has been used by one or more sessions.'
+    );
+  }
+
+  await pool.query(`DELETE FROM club_locations WHERE id = $1`, [locationId]);
+}
+
 export async function joinClub(
   joinCode: string,
   userId: string,
@@ -221,56 +253,48 @@ export async function joinClub(
   }
   const clubId = clubResult.rows[0].id;
 
-  // Normalize name regardless of whether this is a new or returning member.
-  const fullName = `${toTitleCase(firstName)} ${toTitleCase(lastName)}`;
+  const displayName = `${toTitleCase(firstName)} ${toTitleCase(lastName)}`;
 
-  // Already a member? Update their name and return the existing membership.
-  const existing = await pool.query<{ id: string }>(
-    `SELECT id FROM memberships WHERE club_id = $1 AND user_id = $2 LIMIT 1`,
+  // If this user already has a membership row (any status), return it active.
+  const existing = await pool.query<{ id: string; status: string }>(
+    `SELECT id, status FROM memberships WHERE club_id = $1 AND user_id = $2 LIMIT 1`,
     [clubId, userId]
   );
   if ((existing.rowCount ?? 0) > 0) {
-    await pool.query(
-      `UPDATE users SET name = $1, updated_at = NOW() WHERE id = $2`,
-      [fullName, userId]
-    );
-    return { membershipId: existing.rows[0].id, clubId };
+    const mem = existing.rows[0];
+    if (mem.status !== 'active') {
+      // Reactivate — user must use the recovery flow; block self-rejoin.
+      throw new AppError(
+        409,
+        'DISPLAY_NAME_CONFLICT',
+        'This name already exists in this club. If you already joined this club before, please use your recovery code. Otherwise, choose a different name.'
+      );
+    }
+    return { membershipId: mem.id, clubId };
   }
 
-  // Duplicate name check: block if any member in this club shares the same
-  // normalized first + last name. Name matching is ONLY for conflict detection —
-  // never for identity confirmation. Recovery code is the only restore path.
-  const normFirst = normalizePart(firstName);
-  const normLast = normalizePart(lastName);
-  const normFull = `${normFirst} ${normLast}`;
+  // Check if the display_name is already taken by any row (active or removed).
+  // The unique index enforces this at DB level too; we check first for a clean error.
   const duplicate = await pool.query<{ id: string }>(
-    `SELECT m.id FROM memberships m
-     JOIN users u ON u.id = m.user_id
-     WHERE m.club_id = $1
-       AND m.user_id <> $2
-       AND LOWER(REGEXP_REPLACE(TRIM(u.name), '\\s+', ' ', 'g')) = $3
+    `SELECT id FROM memberships
+     WHERE club_id = $1
+       AND lower(display_name) = lower($2)
      LIMIT 1`,
-    [clubId, userId, normFull]
+    [clubId, displayName]
   );
   if ((duplicate.rowCount ?? 0) > 0) {
     throw new AppError(
       409,
-      'POSSIBLE_EXISTING_MEMBER',
-      'A member with this name already exists in this club. If you joined before, use your recovery code to restore your membership, or ask the host/admin for your recovery code. Otherwise, join with a different name.'
+      'DISPLAY_NAME_CONFLICT',
+      'This name already exists in this club. If you already joined this club before, please use your recovery code. Otherwise, choose a different name.'
     );
   }
 
-  // Update this user's display name.
-  await pool.query(
-    `UPDATE users SET name = $1, updated_at = NOW() WHERE id = $2`,
-    [fullName, userId]
-  );
-
   const recoveryCode = generateRecoveryCode();
   const result = await pool.query<{ id: string }>(
-    `INSERT INTO memberships (club_id, user_id, role, status, credits_remaining, recovery_code)
-     VALUES ($1, $2, 'member', 'active', 0, $3) RETURNING id`,
-    [clubId, userId, recoveryCode]
+    `INSERT INTO memberships (club_id, user_id, role, status, credits_remaining, recovery_code, display_name)
+     VALUES ($1, $2, 'member', 'active', 0, $3, $4) RETURNING id`,
+    [clubId, userId, recoveryCode, displayName]
   );
   return { membershipId: result.rows[0].id, clubId };
 }
@@ -291,11 +315,248 @@ export async function createClub(
   );
   const clubId = clubResult.rows[0].id;
 
+  // Fetch the owner's display name from users table
+  const userRow = await pool.query<{ name: string }>(
+    `SELECT name FROM users WHERE id = $1 LIMIT 1`,
+    [userId]
+  );
+  const ownerDisplayName = userRow.rows[0]?.name ?? trimmed;
+
   const recoveryCode = generateRecoveryCode();
   const memberResult = await pool.query<{ id: string }>(
-    `INSERT INTO memberships (club_id, user_id, role, status, credits_remaining, recovery_code)
-     VALUES ($1, $2, 'owner', 'active', 0, $3) RETURNING id`,
-    [clubId, userId, recoveryCode]
+    `INSERT INTO memberships (club_id, user_id, role, status, credits_remaining, recovery_code, display_name)
+     VALUES ($1, $2, 'owner', 'active', 0, $3, $4) RETURNING id`,
+    [clubId, userId, recoveryCode, ownerDisplayName]
   );
   return { membershipId: memberResult.rows[0].id, clubId };
+}
+
+// ─── Regenerate join code ─────────────────────────────────────────────────────
+
+export async function regenerateJoinCode(
+  clubId: string,
+  actorUserId: string
+): Promise<{ joinCode: string }> {
+  const actorResult = await pool.query<{ role: string }>(
+    `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+    [actorUserId, clubId]
+  );
+  const actorRole = actorResult.rows[0]?.role;
+  if (!actorRole || !['admin', 'owner'].includes(actorRole)) {
+    throw new AppError(
+      403,
+      'FORBIDDEN',
+      'Only admins can regenerate the join code.'
+    );
+  }
+
+  const newCode = generateJoinCode();
+  await pool.query(
+    `UPDATE clubs SET join_code = $1, updated_at = NOW() WHERE id = $2`,
+    [newCode, clubId]
+  );
+
+  void createAuditLog({
+    clubId,
+    actorUserId,
+    entityType: 'club',
+    entityId: clubId,
+    action: 'join_code_regenerated',
+    metadata: {},
+  });
+
+  return { joinCode: newCode };
+}
+
+// ─── Transfer ownership ───────────────────────────────────────────────────────
+
+export async function transferOwnership(
+  clubId: string,
+  actorUserId: string,
+  targetMembershipId: string
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const actorResult = await client.query<{ id: string; role: string }>(
+      `SELECT id, role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+      [actorUserId, clubId]
+    );
+    const actor = actorResult.rows[0];
+    if (!actor || actor.role !== 'owner') {
+      throw new AppError(
+        403,
+        'FORBIDDEN',
+        'Only the owner can transfer ownership.'
+      );
+    }
+
+    const targetResult = await client.query<{
+      id: string;
+      user_id: string;
+      role: string;
+    }>(
+      `SELECT id, user_id, role FROM memberships WHERE id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+      [targetMembershipId, clubId]
+    );
+    const target = targetResult.rows[0];
+    if (!target) {
+      throw new AppError(
+        404,
+        'MEMBERSHIP_NOT_FOUND',
+        'Target membership not found.'
+      );
+    }
+    if (target.role !== 'admin') {
+      throw new AppError(
+        400,
+        'INVALID_TARGET',
+        'Ownership can only be transferred to an existing admin.'
+      );
+    }
+
+    // Atomic swap
+    await client.query(
+      `UPDATE memberships SET role = 'owner', updated_at = NOW() WHERE id = $1`,
+      [target.id]
+    );
+    await client.query(
+      `UPDATE memberships SET role = 'admin', updated_at = NOW() WHERE id = $1`,
+      [actor.id]
+    );
+
+    await writeAuditLog(client, {
+      clubId,
+      actorUserId,
+      targetUserId: target.user_id,
+      entityType: 'club',
+      entityId: clubId,
+      action: 'ownership_transferred',
+      metadata: { fromMembershipId: actor.id, toMembershipId: target.id },
+    });
+
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// ─── Remove member ────────────────────────────────────────────────────────────
+
+export async function removeMember(
+  clubId: string,
+  membershipId: string,
+  actorUserId: string
+): Promise<void> {
+  const targetResult = await pool.query<{
+    user_id: string;
+    role: string;
+    club_id: string;
+  }>(`SELECT user_id, role, club_id FROM memberships WHERE id = $1 LIMIT 1`, [
+    membershipId,
+  ]);
+  const target = targetResult.rows[0];
+  if (!target || target.club_id !== clubId) {
+    throw new AppError(404, 'MEMBERSHIP_NOT_FOUND', 'Membership not found.');
+  }
+  if (target.role === 'owner') {
+    throw new AppError(
+      403,
+      'CANNOT_REMOVE_OWNER',
+      'Cannot remove the club owner.'
+    );
+  }
+
+  const actorResult = await pool.query<{ role: string }>(
+    `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+    [actorUserId, clubId]
+  );
+  const actorRole = actorResult.rows[0]?.role;
+  if (!actorRole || !['admin', 'owner'].includes(actorRole)) {
+    throw new AppError(403, 'FORBIDDEN', 'Only admins can remove members.');
+  }
+  if (target.role === 'admin' && actorRole !== 'owner') {
+    throw new AppError(403, 'FORBIDDEN', 'Only the owner can remove an admin.');
+  }
+
+  await pool.query(
+    `UPDATE memberships SET status = 'removed', updated_at = NOW() WHERE id = $1`,
+    [membershipId]
+  );
+
+  void createAuditLog({
+    clubId,
+    actorUserId,
+    targetUserId: target.user_id,
+    entityType: 'membership',
+    entityId: membershipId,
+    action: 'member_removed',
+    metadata: { removedRole: target.role },
+  });
+}
+
+// ─── Recover membership by display name + recovery code ───────────────────────
+
+export type RecoveredMembership = {
+  membershipId: string;
+  clubId: string;
+  userId: string;
+  displayName: string;
+  role: string;
+  credits: number;
+};
+
+export async function recoverMemberByDisplayName(
+  clubId: string,
+  displayName: string,
+  recoveryCode: string
+): Promise<RecoveredMembership> {
+  const result = await pool.query<{
+    id: string;
+    user_id: string;
+    club_id: string;
+    display_name: string;
+    role: string;
+    credits_remaining: number;
+    status: string;
+  }>(
+    `SELECT id, user_id, club_id, display_name, role, credits_remaining, status
+     FROM memberships
+     WHERE club_id = $1
+       AND lower(display_name) = lower($2)
+       AND lower(recovery_code) = lower($3)
+     LIMIT 1`,
+    [clubId, displayName, recoveryCode]
+  );
+
+  if ((result.rowCount ?? 0) === 0) {
+    throw new AppError(
+      404,
+      'RECOVERY_FAILED',
+      'No membership found. Check your name and recovery code.'
+    );
+  }
+
+  const row = result.rows[0];
+
+  // Reactivate if currently removed
+  if (row.status !== 'active') {
+    await pool.query(
+      `UPDATE memberships SET status = 'active', updated_at = NOW() WHERE id = $1`,
+      [row.id]
+    );
+  }
+
+  return {
+    membershipId: row.id,
+    clubId: row.club_id,
+    userId: row.user_id,
+    displayName: row.display_name,
+    role: row.role,
+    credits: row.credits_remaining,
+  };
 }

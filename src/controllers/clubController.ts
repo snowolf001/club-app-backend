@@ -11,8 +11,13 @@ import {
   getClubMembers,
   getClubLocations,
   addClubLocation,
+  deleteClubLocation,
   joinClub,
   createClub,
+  regenerateJoinCode,
+  transferOwnership,
+  removeMember,
+  recoverMemberByDisplayName,
 } from '../services/clubService';
 
 // ─── GET /api/clubs/:clubId ───────────────────────────────────────────────────
@@ -206,6 +211,63 @@ export async function addClubLocationHandler(
   }
 }
 
+// ─── DELETE /api/clubs/:clubId/locations/:locationId ─────────────────────────
+
+export async function deleteClubLocationHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const clubId = req.params['clubId'] as string;
+    const locationId = req.params['locationId'] as string;
+
+    if (!isValidUUID(clubId)) {
+      throw new AppError(
+        400,
+        'INVALID_CLUB_ID',
+        'clubId must be a valid UUID.'
+      );
+    }
+    if (!isValidUUID(locationId)) {
+      throw new AppError(
+        400,
+        'INVALID_LOCATION_ID',
+        'locationId must be a valid UUID.'
+      );
+    }
+
+    const userId = getCurrentUserId(req);
+    const memberRow = await pool.query<{ role: string }>(
+      `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+      [userId, clubId]
+    );
+    const role = memberRow.rows[0]?.role;
+    if (!role || !['admin', 'owner'].includes(role)) {
+      throw new AppError(
+        403,
+        'FORBIDDEN',
+        'Only owners and admins can delete locations.'
+      );
+    }
+
+    await deleteClubLocation(clubId, locationId);
+
+    void createAuditLog({
+      clubId,
+      actorUserId: userId,
+      entityType: 'location',
+      entityId: locationId,
+      action: 'location_deleted',
+      metadata: {},
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+}
+
 // ─── POST /api/clubs/join ─────────────────────────────────────────────────────
 
 export async function joinClubHandler(
@@ -258,6 +320,97 @@ export async function createClubHandler(
     }
     const result = await createClub(name.trim(), userId);
     res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── POST /api/clubs/:clubId/regenerate-join-code ─────────────────────────────
+
+export async function regenerateJoinCodeHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const clubId = req.params['clubId'] as string;
+    if (!isValidUUID(clubId)) {
+      throw new AppError(
+        400,
+        'INVALID_CLUB_ID',
+        'clubId must be a valid UUID.'
+      );
+    }
+    const actorUserId = getCurrentUserId(req);
+    const result = await regenerateJoinCode(clubId, actorUserId);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── POST /api/clubs/:clubId/transfer-ownership ───────────────────────────────
+
+export async function transferOwnershipHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const clubId = req.params['clubId'] as string;
+    if (!isValidUUID(clubId)) {
+      throw new AppError(
+        400,
+        'INVALID_CLUB_ID',
+        'clubId must be a valid UUID.'
+      );
+    }
+    const actorUserId = getCurrentUserId(req);
+    const { targetMembershipId } = req.body as { targetMembershipId?: unknown };
+    if (
+      typeof targetMembershipId !== 'string' ||
+      !isValidUUID(targetMembershipId)
+    ) {
+      throw new AppError(
+        400,
+        'INVALID_TARGET',
+        'targetMembershipId must be a valid UUID.'
+      );
+    }
+    await transferOwnership(clubId, actorUserId, targetMembershipId);
+    res.json({ success: true, data: null });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── DELETE /api/clubs/:clubId/members/:membershipId ─────────────────────────
+
+export async function removeMemberHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const clubId = req.params['clubId'] as string;
+    const membershipId = req.params['membershipId'] as string;
+    if (!isValidUUID(clubId)) {
+      throw new AppError(
+        400,
+        'INVALID_CLUB_ID',
+        'clubId must be a valid UUID.'
+      );
+    }
+    if (!isValidUUID(membershipId)) {
+      throw new AppError(
+        400,
+        'INVALID_MEMBERSHIP_ID',
+        'membershipId must be a valid UUID.'
+      );
+    }
+    const actorUserId = getCurrentUserId(req);
+    await removeMember(clubId, membershipId, actorUserId);
+    res.json({ success: true, data: null });
   } catch (error) {
     next(error);
   }
