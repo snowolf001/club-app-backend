@@ -6,7 +6,10 @@ import {
   updateMemberRoleHandler,
   recoverMembershipHandler,
 } from '../controllers/membershipController';
-import { getMemberAttendanceHandler } from '../controllers/attendanceController';
+import {
+  getMemberAttendanceHandler,
+  getMemberCreditTransactionsHandler,
+} from '../controllers/attendanceController';
 
 const router = Router();
 
@@ -25,5 +28,9 @@ router.get('/memberships/:membershipId', getMembershipByIdHandler);
 router.post('/memberships/:membershipId/credits', addCreditsHandler);
 router.patch('/memberships/:membershipId/role', updateMemberRoleHandler);
 router.get('/memberships/:membershipId/attendance', getMemberAttendanceHandler);
+router.get(
+  '/memberships/:membershipId/credits',
+  getMemberCreditTransactionsHandler
+);
 
 export default router;

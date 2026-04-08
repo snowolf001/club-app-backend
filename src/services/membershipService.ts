@@ -176,6 +176,14 @@ export async function addCredits(
 
     const previousCredits = membership.credits_remaining;
 
+    if (amount < 0 && previousCredits + amount < 0) {
+      throw new AppError(
+        400,
+        'INSUFFICIENT_CREDITS',
+        `Member only has ${previousCredits} credit${previousCredits === 1 ? '' : 's'}. Cannot deduct ${Math.abs(amount)}.`
+      );
+    }
+
     const updatedResult = await client.query<{ credits_remaining: number }>(
       `
         UPDATE memberships
@@ -212,7 +220,7 @@ export async function addCredits(
         amount,
         reason,
         actorUserId,
-        amount > 0 ? 'add' : 'remove',
+        'manual_adjustment',
       ]
     );
 

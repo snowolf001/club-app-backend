@@ -7,12 +7,6 @@ ALTER TABLE clubs
   ADD COLUMN IF NOT EXISTS member_backfill_hours  INTEGER NOT NULL DEFAULT 24,
   ADD COLUMN IF NOT EXISTS host_backfill_hours    INTEGER NOT NULL DEFAULT 72;
 
--- Seed club gets a predictable join code
-UPDATE clubs
-SET join_code = 'DEMO2024'
-WHERE id = '22222222-2222-2222-2222-222222222222'
-  AND join_code IS NULL;
-
 -- ── club_locations ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS club_locations (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),

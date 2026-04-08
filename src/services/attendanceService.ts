@@ -132,3 +132,43 @@ export async function getCreditTransactionsForUser(
     createdAt: row.created_at,
   }));
 }
+export async function getCreditTransactionsForMembership(
+  membershipId: string
+): Promise<CreditTransactionItem[]> {
+  const result = await pool.query<{
+    id: string;
+    amount: number;
+    transaction_type: string;
+    note: string | null;
+    session_title: string | null;
+    actor_name: string | null;
+    created_at: string;
+  }>(
+    `
+      SELECT
+        ct.id,
+        ct.amount,
+        ct.transaction_type,
+        ct.note,
+        s.title AS session_title,
+        u.name  AS actor_name,
+        ct.created_at
+      FROM credit_transactions ct
+      LEFT JOIN sessions s ON s.id = ct.session_id
+      LEFT JOIN users   u ON u.id = ct.actor_user_id
+      WHERE ct.membership_id = $1
+      ORDER BY ct.created_at DESC
+    `,
+    [membershipId]
+  );
+
+  return result.rows.map((row) => ({
+    transactionId: row.id,
+    amount: row.amount,
+    transactionType: row.transaction_type,
+    note: row.note,
+    sessionTitle: row.session_title,
+    actorName: row.actor_name,
+    createdAt: row.created_at,
+  }));
+}
