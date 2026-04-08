@@ -445,6 +445,60 @@ export async function transferOwnership(
   }
 }
 
+// ─── Leave club ───────────────────────────────────────────────────────────────
+
+export async function leaveClub(clubId: string, userId: string): Promise<void> {
+  const memberRow = await pool.query<{ id: string; role: string }>(
+    `SELECT id, role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+    [userId, clubId]
+  );
+  const member = memberRow.rows[0];
+  if (!member) {
+    throw new AppError(
+      404,
+      'MEMBERSHIP_NOT_FOUND',
+      'Active membership not found.'
+    );
+  }
+
+  if (member.role === 'owner') {
+    // Check if another active admin exists
+    const adminRow = await pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM memberships
+       WHERE club_id = $1 AND role = 'admin' AND status = 'active'`,
+      [clubId]
+    );
+    const adminCount = parseInt(adminRow.rows[0].count, 10);
+    if (adminCount > 0) {
+      throw new AppError(
+        403,
+        'OWNER_TRANSFER_REQUIRED',
+        'You must transfer ownership before leaving this club.'
+      );
+    } else {
+      throw new AppError(
+        403,
+        'OWNER_PROMOTE_AND_TRANSFER_REQUIRED',
+        'Please promote another member to admin first, then transfer ownership before leaving.'
+      );
+    }
+  }
+
+  await pool.query(
+    `UPDATE memberships SET status = 'removed', updated_at = NOW() WHERE id = $1`,
+    [member.id]
+  );
+
+  void createAuditLog({
+    clubId,
+    actorUserId: userId,
+    entityType: 'membership',
+    entityId: member.id,
+    action: 'member_left',
+    metadata: { role: member.role },
+  });
+}
+
 // ─── Remove member ────────────────────────────────────────────────────────────
 
 export async function removeMember(

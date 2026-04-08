@@ -17,6 +17,7 @@ import {
   regenerateJoinCode,
   transferOwnership,
   removeMember,
+  leaveClub,
   recoverMemberByDisplayName,
 } from '../services/clubService';
 
@@ -410,6 +411,30 @@ export async function removeMemberHandler(
     }
     const actorUserId = getCurrentUserId(req);
     await removeMember(clubId, membershipId, actorUserId);
+    res.json({ success: true, data: null });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── POST /api/clubs/:clubId/leave ────────────────────────────────────────────
+
+export async function leaveClubHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const clubId = req.params['clubId'] as string;
+    if (!isValidUUID(clubId)) {
+      throw new AppError(
+        400,
+        'INVALID_CLUB_ID',
+        'clubId must be a valid UUID.'
+      );
+    }
+    const userId = getCurrentUserId(req);
+    await leaveClub(clubId, userId);
     res.json({ success: true, data: null });
   } catch (error) {
     next(error);

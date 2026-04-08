@@ -12,6 +12,7 @@ import {
   regenerateJoinCodeHandler,
   transferOwnershipHandler,
   removeMemberHandler,
+  leaveClubHandler,
   recoverClubMembershipHandler,
 } from '../controllers/clubController';
 
@@ -25,6 +26,7 @@ router.get('/clubs/:clubId/settings', getClubSettingsHandler);
 router.patch('/clubs/:clubId/settings', updateClubSettingsHandler);
 router.get('/clubs/:clubId/members', getClubMembersHandler);
 router.delete('/clubs/:clubId/members/:membershipId', removeMemberHandler);
+router.post('/clubs/:clubId/leave', leaveClubHandler);
 router.get('/clubs/:clubId/locations', getClubLocationsHandler);
 router.post('/clubs/:clubId/locations', addClubLocationHandler);
 router.delete(
