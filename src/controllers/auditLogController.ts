@@ -34,15 +34,19 @@ export async function getAuditLogsHandler(
       );
     }
 
-    // Admin-only: verify caller is admin or owner
+    // Host/admin/owner only
     const actorId = getCurrentUserId(req);
     const memberRow = await pool.query<{ role: string }>(
       `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 LIMIT 1`,
       [actorId, clubId]
     );
     const role = memberRow.rows[0]?.role;
-    if (!role || !['admin', 'owner'].includes(role)) {
-      throw new AppError(403, 'FORBIDDEN', 'Only admins can view audit logs.');
+    if (!role || !['host', 'admin', 'owner'].includes(role)) {
+      throw new AppError(
+        403,
+        'FORBIDDEN',
+        'Only hosts and admins can view audit logs.'
+      );
     }
 
     const rawLimit = parseInt(String(req.query['limit'] ?? DEFAULT_LIMIT), 10);
@@ -54,7 +58,26 @@ export async function getAuditLogsHandler(
         : Math.min(rawLimit, MAX_LIMIT);
     const offset = isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
 
-    const logs = await getAuditLogs(clubId, limit, offset);
+    const targetUserId =
+      typeof req.query['targetUserId'] === 'string' &&
+      req.query['targetUserId'].trim()
+        ? req.query['targetUserId'].trim()
+        : null;
+    const startDate =
+      typeof req.query['startDate'] === 'string' &&
+      req.query['startDate'].trim()
+        ? req.query['startDate'].trim()
+        : null;
+    const endDate =
+      typeof req.query['endDate'] === 'string' && req.query['endDate'].trim()
+        ? req.query['endDate'].trim()
+        : null;
+
+    const logs = await getAuditLogs(clubId, limit, offset, {
+      targetUserId,
+      startDate,
+      endDate,
+    });
 
     res.json({ success: true, data: logs });
   } catch (error) {

@@ -123,8 +123,35 @@ export async function createAuditLog(
 export async function getAuditLogs(
   clubId: string,
   limit: number,
-  offset: number
+  offset: number,
+  filters?: {
+    targetUserId?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+  }
 ): Promise<AuditLogItem[]> {
+  const conditions: string[] = ['al.club_id = $1'];
+  const params: unknown[] = [clubId];
+  let idx = 2;
+
+  if (filters?.targetUserId) {
+    conditions.push(`al.target_user_id = $${idx++}`);
+    params.push(filters.targetUserId);
+  }
+  if (filters?.startDate) {
+    conditions.push(`al.created_at >= $${idx++}::timestamptz`);
+    params.push(filters.startDate);
+  }
+  if (filters?.endDate) {
+    conditions.push(`al.created_at < ($${idx++}::date + interval '1 day')`);
+    params.push(filters.endDate);
+  }
+
+  const where = conditions.join(' AND ');
+  params.push(limit, offset);
+  const limitIdx = idx;
+  const offsetIdx = idx + 1;
+
   const result = await pool.query<AuditLogRow>(
     `
       SELECT
@@ -142,11 +169,11 @@ export async function getAuditLogs(
       FROM audit_logs al
       LEFT JOIN users au ON au.id = al.actor_user_id
       LEFT JOIN users tu ON tu.id = al.target_user_id
-      WHERE al.club_id = $1
+      WHERE ${where}
       ORDER BY al.created_at DESC
-      LIMIT $2 OFFSET $3
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
     `,
-    [clubId, limit, offset]
+    params
   );
 
   return result.rows.map((row) => ({

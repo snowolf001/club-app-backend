@@ -4,6 +4,7 @@ import {
   addCreditsHandler,
   getMembershipByIdHandler,
   updateMemberRoleHandler,
+  recoverMembershipHandler,
 } from '../controllers/membershipController';
 import { getMemberAttendanceHandler } from '../controllers/attendanceController';
 
@@ -19,6 +20,7 @@ router.use((req, _res, next) => {
 });
 
 router.get('/memberships/me', getMyMembershipHandler);
+router.post('/memberships/recover', recoverMembershipHandler);
 router.get('/memberships/:membershipId', getMembershipByIdHandler);
 router.post('/memberships/:membershipId/credits', addCreditsHandler);
 router.patch('/memberships/:membershipId/role', updateMemberRoleHandler);

@@ -100,6 +100,44 @@ export async function getMembershipById(membershipId: string): Promise<{
   };
 }
 
+export async function getMembershipByRecoveryCode(
+  recoveryCode: string
+): Promise<{
+  membership: MembershipItem;
+  club: { clubId: string; name: string; joinCode: string | null };
+}> {
+  const result = await pool.query<
+    MembershipRow & { club_name: string; club_join_code: string | null }
+  >(
+    `SELECT m.id, m.user_id, m.club_id, m.role, m.credits_remaining, m.status,
+            m.recovery_code, u.name AS user_name,
+            c.name AS club_name, c.join_code AS club_join_code
+     FROM memberships m
+     JOIN clubs c ON c.id = m.club_id
+     JOIN users u ON u.id = m.user_id
+     WHERE LOWER(m.recovery_code) = LOWER($1) LIMIT 1`,
+    [recoveryCode]
+  );
+
+  if ((result.rowCount ?? 0) === 0) {
+    throw new AppError(
+      404,
+      'MEMBERSHIP_NOT_FOUND',
+      'No membership found with that recovery code.'
+    );
+  }
+
+  const row = result.rows[0];
+  return {
+    membership: mapMembership(row),
+    club: {
+      clubId: row.club_id,
+      name: row.club_name,
+      joinCode: row.club_join_code,
+    },
+  };
+}
+
 export async function addCredits(
   membershipId: string,
   actorUserId: string,

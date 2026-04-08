@@ -6,6 +6,7 @@ import {
   getMyMembership,
   addCredits,
   getMembershipById,
+  getMembershipByRecoveryCode,
   updateMemberRole,
 } from '../services/membershipService';
 import { isNonZeroInteger } from '../utils/validators';
@@ -151,6 +152,31 @@ export async function updateMemberRoleHandler(
 
     const membership = await updateMemberRole(membershipId, actorUserId, role);
     res.json({ success: true, data: membership });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── POST /api/memberships/recover ───────────────────────────────────────────
+
+export async function recoverMembershipHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { recoveryCode } = req.body ?? {};
+
+    if (typeof recoveryCode !== 'string' || recoveryCode.trim() === '') {
+      throw new AppError(
+        400,
+        'MISSING_RECOVERY_CODE',
+        'recoveryCode is required.'
+      );
+    }
+
+    const result = await getMembershipByRecoveryCode(recoveryCode.trim());
+    res.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }
