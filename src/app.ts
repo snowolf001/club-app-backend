@@ -7,6 +7,7 @@ import clubRoutes from './routes/clubRoutes';
 import reportRoutes from './routes/reportRoutes';
 import { requestLogger } from './middleware/requestLogger';
 import { errorHandler } from './middleware/errorHandler';
+import { apiKeyAuth } from './middleware/apiKeyAuth';
 
 const app = express();
 
@@ -17,12 +18,12 @@ app.get('/health', (_req, res) => {
   res.json({ success: true });
 });
 
-app.use('/api', sessionRoutes);
-app.use('/api', membershipRoutes);
-app.use('/api', attendanceRoutes);
-app.use('/api', auditLogRoutes);
-app.use('/api', clubRoutes);
-app.use('/api', reportRoutes);
+app.use('/api', apiKeyAuth, sessionRoutes);
+app.use('/api', apiKeyAuth, membershipRoutes);
+app.use('/api', apiKeyAuth, attendanceRoutes);
+app.use('/api', apiKeyAuth, auditLogRoutes);
+app.use('/api', apiKeyAuth, clubRoutes);
+app.use('/api', apiKeyAuth, reportRoutes);
 
 app.use(errorHandler);
 
