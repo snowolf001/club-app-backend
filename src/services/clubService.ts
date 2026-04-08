@@ -7,6 +7,20 @@ function generateJoinCode(): string {
   return randomBytes(4).toString('hex').toUpperCase(); // 8 hex chars
 }
 
+/**
+ * Ensures a user record exists for the given userId.
+ * Uses ON CONFLICT DO NOTHING so existing rows are untouched.
+ * This is the correct hook point for auth integration: when a real auth
+ * middleware is added, it will call this (or equivalent) after verifying
+ * the JWT to guarantee a users row exists before any FK-dependent inserts.
+ */
+async function ensureUserExists(userId: string, name: string): Promise<void> {
+  await pool.query(
+    `INSERT INTO users (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
+    [userId, name]
+  );
+}
+
 function generateRecoveryCode(): string {
   // Format: XXXX-XXXX-XXXX (12 uppercase hex chars in 3 groups)
   const hex = randomBytes(6).toString('hex').toUpperCase();
@@ -255,6 +269,9 @@ export async function joinClub(
 
   const displayName = `${toTitleCase(firstName)} ${toTitleCase(lastName)}`;
 
+  // Ensure a users row exists for this userId before any FK-dependent inserts.
+  await ensureUserExists(userId, displayName);
+
   // If this user already has a membership row (any status), return it active.
   const existing = await pool.query<{ id: string; status: string }>(
     `SELECT id, status FROM memberships WHERE club_id = $1 AND user_id = $2 LIMIT 1`,
@@ -309,18 +326,20 @@ export async function createClub(
 
   const joinCode = generateJoinCode();
 
+  // Ensure a users row exists for this userId before any FK-dependent inserts.
+  // First check if the user already exists so we can use their real name.
+  const existingUser = await pool.query<{ name: string }>(
+    `SELECT name FROM users WHERE id = $1 LIMIT 1`,
+    [userId]
+  );
+  const ownerDisplayName = existingUser.rows[0]?.name ?? trimmed;
+  await ensureUserExists(userId, ownerDisplayName);
+
   const clubResult = await pool.query<{ id: string }>(
     `INSERT INTO clubs (name, join_code) VALUES ($1, $2) RETURNING id`,
     [trimmed, joinCode]
   );
   const clubId = clubResult.rows[0].id;
-
-  // Fetch the owner's display name from users table
-  const userRow = await pool.query<{ name: string }>(
-    `SELECT name FROM users WHERE id = $1 LIMIT 1`,
-    [userId]
-  );
-  const ownerDisplayName = userRow.rows[0]?.name ?? trimmed;
 
   const recoveryCode = generateRecoveryCode();
   const memberResult = await pool.query<{ id: string }>(
