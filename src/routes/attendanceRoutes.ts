@@ -3,17 +3,11 @@ import {
   getMyAttendanceHandler,
   getMyCreditTransactionsHandler,
 } from '../controllers/attendanceController';
+import { identifyUser } from '../middleware/identifyUser';
 
 const router = Router();
 
-// Temporary auth stub — replace with real middleware before production.
-router.use((req, _res, next) => {
-  req.user = {
-    id: '11111111-1111-1111-1111-111111111111',
-    role: 'member',
-  };
-  next();
-});
+router.use(identifyUser);
 
 router.get('/attendance/me', getMyAttendanceHandler);
 router.get('/credits/me', getMyCreditTransactionsHandler);

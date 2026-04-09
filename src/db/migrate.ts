@@ -25,16 +25,16 @@ export async function runMigrations(pool: Pool): Promise<void> {
   // Read and sort migration filenames.
   const files = fs
     .readdirSync(MIGRATIONS_DIR)
-    .filter(f => f.endsWith('.sql'))
+    .filter((f) => f.endsWith('.sql'))
     .sort();
 
   // Fetch already-applied migrations.
   const result = await pool.query<{ filename: string }>(
     'SELECT filename FROM schema_migrations'
   );
-  const applied = new Set(result.rows.map(r => r.filename));
+  const applied = new Set(result.rows.map((r) => r.filename));
 
-  const pending = files.filter(f => !applied.has(f));
+  const pending = files.filter((f) => !applied.has(f));
 
   if (pending.length === 0) {
     logger.info('[migrate] All migrations already applied.');
