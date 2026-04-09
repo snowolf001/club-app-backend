@@ -177,17 +177,30 @@ export async function addClubLocationHandler(
     }
 
     // Only admin or owner may add locations
-    const userId = getCurrentUserId(req);
-    const memberRow = await pool.query<{ role: string }>(
-      `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 LIMIT 1`,
-      [userId, clubId]
-    );
-    const role = memberRow.rows[0]?.role;
-    if (!role || !['admin', 'owner'].includes(role)) {
-      throw new AppError(403, 'FORBIDDEN', 'Only admins can add locations.');
+    const { membershipId, name, address } = req.body as {
+      membershipId?: unknown;
+      name?: unknown;
+      address?: unknown;
+    };
+    if (typeof membershipId !== 'string' || !isValidUUID(membershipId)) {
+      throw new AppError(
+        400,
+        'INVALID_MEMBERSHIP_ID',
+        'membershipId is required.'
+      );
     }
-
-    const { name, address } = req.body as { name?: unknown; address?: unknown };
+    const memberRow = await pool.query<{ role: string; user_id: string }>(
+      `SELECT role, user_id FROM memberships WHERE id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+      [membershipId, clubId]
+    );
+    const row = memberRow.rows[0];
+    if (!row || !['admin', 'owner'].includes(row.role)) {
+      throw new AppError(
+        403,
+        'FORBIDDEN',
+        'Only admins or owners can add locations.'
+      );
+    }
     if (typeof name !== 'string' || !name.trim()) {
       throw new AppError(400, 'INVALID_LOCATION', 'Location name is required.');
     }
@@ -199,7 +212,7 @@ export async function addClubLocationHandler(
 
     void createAuditLog({
       clubId,
-      actorUserId: userId,
+      actorUserId: row.user_id,
       entityType: 'location',
       entityId: location.id,
       action: 'location_created',
@@ -238,13 +251,19 @@ export async function deleteClubLocationHandler(
       );
     }
 
-    const userId = getCurrentUserId(req);
-    const memberRow = await pool.query<{ role: string }>(
-      `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+    const userId = req.query['membershipId'] as string | undefined;
+    const memberRow = await pool.query<{ role: string; user_id: string }>(
+      `SELECT role, user_id FROM memberships WHERE id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
       [userId, clubId]
     );
     const role = memberRow.rows[0]?.role;
-    if (!role || !['admin', 'owner'].includes(role)) {
+    const actorUserId = memberRow.rows[0]?.user_id;
+    if (
+      !userId ||
+      !isValidUUID(userId) ||
+      !role ||
+      !['admin', 'owner'].includes(role)
+    ) {
       throw new AppError(
         403,
         'FORBIDDEN',
@@ -256,7 +275,7 @@ export async function deleteClubLocationHandler(
 
     void createAuditLog({
       clubId,
-      actorUserId: userId,
+      actorUserId: actorUserId ?? '',
       entityType: 'location',
       entityId: locationId,
       action: 'location_deleted',
