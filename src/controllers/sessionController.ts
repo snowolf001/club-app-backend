@@ -177,7 +177,7 @@ export async function createSessionHandler(
   next: NextFunction
 ): Promise<void> {
   try {
-    const { clubId, title, locationId, startTime, endTime } =
+    const { clubId, title, locationId, startTime, endTime, capacity } =
       req.body as Record<string, unknown>;
 
     if (typeof clubId !== 'string' || !isValidUUID(clubId)) {
@@ -238,6 +238,12 @@ export async function createSessionHandler(
       locationId,
       startTime,
       endTime: typeof endTime === 'string' ? endTime : null,
+      capacity:
+        typeof capacity === 'number' &&
+        Number.isInteger(capacity) &&
+        capacity > 0
+          ? capacity
+          : null,
     });
 
     void createAuditLog({

@@ -23,6 +23,7 @@ type SessionRow = {
   club_id: string;
   starts_at: string;
   ends_at: string | null;
+  capacity: number | null;
 };
 
 type MembershipRow = {
@@ -54,10 +55,11 @@ async function getSessionForCheckin(
 ): Promise<SessionRow> {
   const result = await client.query<SessionRow>(
     `
-      SELECT id, club_id, starts_at, ends_at
+      SELECT id, club_id, starts_at, ends_at, capacity
       FROM sessions
       WHERE id = $1
       LIMIT 1
+      FOR UPDATE
     `,
     [sessionId]
   );
@@ -67,6 +69,25 @@ async function getSessionForCheckin(
   }
 
   return result.rows[0];
+}
+
+async function ensureSessionNotFull(
+  client: PoolClient,
+  session: SessionRow
+): Promise<void> {
+  if (session.capacity === null) return;
+  const countResult = await client.query<{ count: string }>(
+    `SELECT COUNT(*) AS count FROM attendances WHERE session_id = $1`,
+    [session.id]
+  );
+  const currentCount = parseInt(countResult.rows[0].count, 10);
+  if (currentCount >= session.capacity) {
+    throw new AppError(
+      409,
+      'SESSION_FULL',
+      'This session has reached its maximum capacity.'
+    );
+  }
 }
 
 async function getMembershipForUpdate(
@@ -177,6 +198,7 @@ export async function checkInToSession({
     const userId = membership.user_id;
 
     await ensureNoDuplicateAttendance(client, sessionId, userId);
+    await ensureSessionNotFull(client, session);
 
     if (membership.credits_remaining < creditsUsed) {
       throw new AppError(
@@ -385,6 +407,7 @@ export async function manualCheckInToSession({
     }
 
     await ensureNoDuplicateAttendance(client, sessionId, membership.user_id);
+    await ensureSessionNotFull(client, session);
 
     if (membership.credits_remaining < creditsUsed) {
       throw new AppError(

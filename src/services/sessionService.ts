@@ -12,6 +12,7 @@ type SessionRow = {
   created_at: string;
   location_id: string | null;
   location_name: string | null;
+  capacity: number | null;
 };
 
 type CheckedInRow = {
@@ -34,6 +35,7 @@ export type SessionItem = {
   createdAt: string;
   locationId: string | null;
   locationName: string | null;
+  capacity: number | null;
 };
 
 export type CheckedInMember = {
@@ -57,12 +59,13 @@ function mapSessionRow(row: SessionRow): SessionItem {
     createdAt: row.created_at,
     locationId: row.location_id,
     locationName: row.location_name,
+    capacity: row.capacity,
   };
 }
 
 const SESSION_SELECT = `
   SELECT s.id, s.club_id, s.title, s.starts_at, s.ends_at, s.created_at,
-         s.location_id, cl.name AS location_name
+         s.location_id, cl.name AS location_name, s.capacity
   FROM sessions s
   LEFT JOIN club_locations cl ON cl.id = s.location_id
 `;
@@ -151,17 +154,19 @@ export async function createSession(params: {
   locationId: string;
   startTime: string;
   endTime?: string | null;
+  capacity?: number | null;
 }): Promise<SessionItem> {
-  const { clubId, title, locationId, startTime, endTime } = params;
+  const { clubId, title, locationId, startTime, endTime, capacity } = params;
   const result = await pool.query<{ id: string }>(
-    `INSERT INTO sessions (club_id, title, location_id, starts_at, ends_at)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    `INSERT INTO sessions (club_id, title, location_id, starts_at, ends_at, capacity)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
     [
       clubId,
       title ? title.trim() : null,
       locationId,
       startTime,
       endTime ?? null,
+      capacity ?? null,
     ]
   );
   return getSessionById(result.rows[0].id);
