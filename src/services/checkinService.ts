@@ -6,7 +6,7 @@ import { writeAuditLog } from './auditLogService';
 
 type CheckInParams = {
   sessionId: string;
-  userId: string;
+  membershipId: string;
   creditsUsed: number;
 };
 
@@ -130,7 +130,7 @@ async function ensureNoDuplicateAttendance(
 
 export async function checkInToSession({
   sessionId,
-  userId,
+  membershipId,
   creditsUsed,
 }: CheckInParams): Promise<CheckInResult> {
   const client = await pool.connect();
@@ -150,11 +150,31 @@ export async function checkInToSession({
       );
     }
 
-    const membership = await getMembershipForUpdate(
-      client,
-      session.club_id,
-      userId
+    // Look up membership by ID (same pattern as manualCheckInToSession)
+    const membershipResult = await client.query<MembershipRow>(
+      `SELECT id, user_id, club_id, role, credits_remaining, status
+       FROM memberships WHERE id = $1 LIMIT 1 FOR UPDATE`,
+      [membershipId]
     );
+    if ((membershipResult.rowCount ?? 0) === 0) {
+      throw new AppError(404, 'MEMBERSHIP_NOT_FOUND', 'Membership not found.');
+    }
+    const membership = membershipResult.rows[0];
+    if (membership.club_id !== session.club_id) {
+      throw new AppError(
+        403,
+        'MEMBERSHIP_NOT_FOUND',
+        'Membership does not belong to this club.'
+      );
+    }
+    if (membership.status !== 'active') {
+      throw new AppError(
+        403,
+        'MEMBERSHIP_INACTIVE',
+        'Membership is not active.'
+      );
+    }
+    const userId = membership.user_id;
 
     await ensureNoDuplicateAttendance(client, sessionId, userId);
 

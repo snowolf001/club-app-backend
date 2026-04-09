@@ -85,7 +85,10 @@ export async function postSessionCheckIn(
 ): Promise<void> {
   try {
     const sessionId = req.params['sessionId'] as string;
-    const userId = getCurrentUserId(req);
+    const { membershipId, creditsUsed: rawCreditsUsed } = req.body as Record<
+      string,
+      unknown
+    >;
 
     if (!isValidUUID(sessionId)) {
       throw new AppError(
@@ -95,9 +98,16 @@ export async function postSessionCheckIn(
       );
     }
 
-    const rawCreditsUsed = req.body?.creditsUsed;
+    if (typeof membershipId !== 'string' || !isValidUUID(membershipId)) {
+      throw new AppError(
+        400,
+        'INVALID_MEMBERSHIP_ID',
+        'membershipId must be a valid UUID.'
+      );
+    }
+
     const creditsUsed: number =
-      rawCreditsUsed === undefined ? 1 : rawCreditsUsed;
+      rawCreditsUsed === undefined ? 1 : (rawCreditsUsed as number);
 
     if (
       typeof creditsUsed !== 'number' ||
@@ -111,7 +121,11 @@ export async function postSessionCheckIn(
       );
     }
 
-    const result = await checkInToSession({ sessionId, userId, creditsUsed });
+    const result = await checkInToSession({
+      sessionId,
+      membershipId,
+      creditsUsed,
+    });
 
     res.status(201).json({
       success: true,
