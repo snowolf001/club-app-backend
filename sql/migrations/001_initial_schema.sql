@@ -35,6 +35,7 @@ CREATE TABLE club_locations (
   club_id    UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
   name       TEXT NOT NULL,
   address    TEXT NOT NULL DEFAULT '',
+  is_hidden  BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

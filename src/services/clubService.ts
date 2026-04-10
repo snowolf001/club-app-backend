@@ -56,6 +56,7 @@ type LocationRow = {
   club_id: string;
   name: string;
   address: string;
+  is_hidden: boolean;
 };
 
 type ClubMemberRow = {
@@ -87,6 +88,7 @@ export type ClubLocation = {
   clubId: string;
   name: string;
   address: string;
+  isHidden: boolean;
 };
 
 export type ClubMember = {
@@ -191,10 +193,14 @@ export async function getClubMembers(clubId: string): Promise<ClubMember[]> {
 }
 
 export async function getClubLocations(
-  clubId: string
+  clubId: string,
+  includeHidden: boolean = false
 ): Promise<ClubLocation[]> {
   const result = await pool.query<LocationRow>(
-    `SELECT id, club_id, name, address FROM club_locations WHERE club_id = $1 ORDER BY name`,
+    `SELECT id, club_id, name, address, is_hidden
+     FROM club_locations
+     WHERE club_id = $1 ${!includeHidden ? 'AND is_hidden = false' : ''}
+     ORDER BY name`,
     [clubId]
   );
   return result.rows.map((row) => ({
@@ -202,6 +208,7 @@ export async function getClubLocations(
     clubId: row.club_id,
     name: row.name,
     address: row.address,
+    isHidden: row.is_hidden,
   }));
 }
 
@@ -212,7 +219,7 @@ export async function addClubLocation(
 ): Promise<ClubLocation> {
   const result = await pool.query<LocationRow>(
     `INSERT INTO club_locations (club_id, name, address) VALUES ($1, $2, $3)
-     RETURNING id, club_id, name, address`,
+     RETURNING id, club_id, name, address, is_hidden`,
     [clubId, name, address]
   );
   const row = result.rows[0];
@@ -221,13 +228,14 @@ export async function addClubLocation(
     clubId: row.club_id,
     name: row.name,
     address: row.address,
+    isHidden: row.is_hidden,
   };
 }
 
 export async function deleteClubLocation(
   clubId: string,
   locationId: string
-): Promise<void> {
+): Promise<{ success: boolean; mode: 'deleted' | 'hidden' }> {
   // Verify location exists and belongs to this club
   const locRow = await pool.query<{ id: string }>(
     `SELECT id FROM club_locations WHERE id = $1 AND club_id = $2 LIMIT 1`,
@@ -237,20 +245,22 @@ export async function deleteClubLocation(
     throw new AppError(404, 'LOCATION_NOT_FOUND', 'Location not found.');
   }
 
-  // Prevent deletion if any session references this location
+  // Check if any session references this location
   const sessionCount = await pool.query<{ count: string }>(
     `SELECT COUNT(*) AS count FROM sessions WHERE location_id = $1`,
     [locationId]
   );
+  
   if (parseInt(sessionCount.rows[0].count, 10) > 0) {
-    throw new AppError(
-      409,
-      'LOCATION_NOT_DELETABLE',
-      'This location cannot be deleted because it has been used by one or more sessions.'
+    await pool.query(
+      `UPDATE club_locations SET is_hidden = true, updated_at = NOW() WHERE id = $1`,
+      [locationId]
     );
+    return { success: true, mode: 'hidden' };
   }
 
   await pool.query(`DELETE FROM club_locations WHERE id = $1`, [locationId]);
+  return { success: true, mode: 'deleted' };
 }
 
 export async function joinClub(

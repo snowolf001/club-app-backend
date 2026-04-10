@@ -160,6 +160,7 @@ export async function getClubLocationsHandler(
 ): Promise<void> {
   try {
     const clubId = req.params['clubId'] as string;
+    const includeHidden = req.query['includeHidden'] === 'true';
     if (!isValidUUID(clubId)) {
       throw new AppError(
         400,
@@ -167,7 +168,7 @@ export async function getClubLocationsHandler(
         'clubId must be a valid UUID.'
       );
     }
-    const locations = await getClubLocations(clubId);
+    const locations = await getClubLocations(clubId, includeHidden);
     res.json({ success: true, data: locations });
   } catch (error) {
     next(error);
@@ -273,18 +274,18 @@ export async function deleteClubLocationHandler(
       );
     }
 
-    await deleteClubLocation(clubId, locationId);
+    const result = await deleteClubLocation(clubId, locationId);
 
     void createAuditLog({
       clubId,
       actorUserId: memberRow.rows[0].user_id,
       entityType: 'location',
       entityId: locationId,
-      action: 'location_deleted',
+      action: result.mode === 'hidden' ? 'location_hidden' : 'location_deleted',
       metadata: {},
     });
 
-    res.json({ success: true });
+    res.json({ success: true, mode: result.mode });
   } catch (error) {
     next(error);
   }
