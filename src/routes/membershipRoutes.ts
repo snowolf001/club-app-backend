@@ -17,15 +17,30 @@ const router = Router();
 // Bootstrap endpoint — no membershipId yet, must come before identifyUser
 router.post('/memberships/recover', recoverMembershipHandler);
 
-router.use(identifyUser);
-
-router.get('/memberships/me', getMyMembershipHandler);
-router.get('/memberships/:membershipId', getMembershipByIdHandler);
-router.post('/memberships/:membershipId/credits', addCreditsHandler);
-router.patch('/memberships/:membershipId/role', updateMemberRoleHandler);
-router.get('/memberships/:membershipId/attendance', getMemberAttendanceHandler);
+router.get('/memberships/me', identifyUser, getMyMembershipHandler);
+router.get(
+  '/memberships/:membershipId',
+  identifyUser,
+  getMembershipByIdHandler
+);
+router.post(
+  '/memberships/:membershipId/credits',
+  identifyUser,
+  addCreditsHandler
+);
+router.patch(
+  '/memberships/:membershipId/role',
+  identifyUser,
+  updateMemberRoleHandler
+);
+router.get(
+  '/memberships/:membershipId/attendance',
+  identifyUser,
+  getMemberAttendanceHandler
+);
 router.get(
   '/memberships/:membershipId/credits',
+  identifyUser,
   getMemberCreditTransactionsHandler
 );
 

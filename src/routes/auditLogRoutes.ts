@@ -4,8 +4,6 @@ import { identifyUser } from '../middleware/identifyUser';
 
 const router = Router();
 
-router.use(identifyUser);
-
-router.get('/audit-logs', getAuditLogsHandler);
+router.get('/audit-logs', identifyUser, getAuditLogsHandler);
 
 export default router;

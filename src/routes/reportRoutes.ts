@@ -9,21 +9,28 @@ import { identifyUser } from '../middleware/identifyUser';
 
 const router = Router();
 
-router.use(identifyUser);
-
 // GET /api/reports/sessions/:sessionId/attendees
 router.get(
   '/reports/sessions/:sessionId/attendees',
+  identifyUser,
   getSessionAttendeesHandler
 );
 
 // GET /api/reports/members/:membershipId/history
-router.get('/reports/members/:membershipId/history', getMemberHistoryHandler);
+router.get(
+  '/reports/members/:membershipId/history',
+  identifyUser,
+  getMemberHistoryHandler
+);
 
 // GET /api/reports/attendance?clubId=&startDate=&endDate=
-router.get('/reports/attendance', getAttendanceReportHandler);
+router.get('/reports/attendance', identifyUser, getAttendanceReportHandler);
 
 // GET /api/reports/sessions/breakdown?clubId=&startDate=&endDate=&last=true
-router.get('/reports/sessions/breakdown', getSessionsBreakdownHandler);
+router.get(
+  '/reports/sessions/breakdown',
+  identifyUser,
+  getSessionsBreakdownHandler
+);
 
 export default router;

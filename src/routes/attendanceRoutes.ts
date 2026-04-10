@@ -7,9 +7,7 @@ import { identifyUser } from '../middleware/identifyUser';
 
 const router = Router();
 
-router.use(identifyUser);
-
-router.get('/attendance/me', getMyAttendanceHandler);
-router.get('/credits/me', getMyCreditTransactionsHandler);
+router.get('/attendance/me', identifyUser, getMyAttendanceHandler);
+router.get('/credits/me', identifyUser, getMyCreditTransactionsHandler);
 
 export default router;
