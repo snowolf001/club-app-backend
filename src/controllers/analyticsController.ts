@@ -41,8 +41,7 @@ export async function postTrackEvent(
       typeof body['platform'] === 'string' ? body['platform'] : null;
     const appVersion =
       typeof body['appVersion'] === 'string' ? body['appVersion'] : null;
-    const clubId =
-      typeof body['clubId'] === 'string' ? body['clubId'] : null;
+    const clubId = typeof body['clubId'] === 'string' ? body['clubId'] : null;
     const sessionId =
       typeof body['sessionId'] === 'string' ? body['sessionId'] : null;
 
