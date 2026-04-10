@@ -250,7 +250,7 @@ export async function deleteClubLocation(
     `SELECT COUNT(*) AS count FROM sessions WHERE location_id = $1`,
     [locationId]
   );
-  
+
   if (parseInt(sessionCount.rows[0].count, 10) > 0) {
     await pool.query(
       `UPDATE club_locations SET is_hidden = true, updated_at = NOW() WHERE id = $1`,
