@@ -54,10 +54,7 @@ router.post(
   identifyUser,
   transferOwnershipHandler
 );
-router.post(
-  '/clubs/:clubId/recover',
-  recoverClubMembershipHandler
-);
+router.post('/clubs/:clubId/recover', recoverClubMembershipHandler);
 router.post('/clubs/join', joinClubHandler);
 router.post('/clubs', createClubHandler);
 

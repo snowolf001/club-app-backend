@@ -312,7 +312,11 @@ export async function joinClubHandler(
     if (typeof lastName !== 'string' || !lastName.trim()) {
       throw new AppError(400, 'INVALID_NAME', 'Last name is required.');
     }
-    const result = await joinClub(joinCode.trim(), firstName.trim(), lastName.trim());
+    const result = await joinClub(
+      joinCode.trim(),
+      firstName.trim(),
+      lastName.trim()
+    );
     res.status(201).json({ success: true, data: result });
   } catch (error) {
     next(error);
@@ -341,7 +345,11 @@ export async function createClubHandler(
     if (typeof lastName !== 'string' || !lastName.trim()) {
       throw new AppError(400, 'INVALID_NAME', 'Last name is required.');
     }
-    const result = await createClub(name.trim(), firstName.trim(), lastName.trim());
+    const result = await createClub(
+      name.trim(),
+      firstName.trim(),
+      lastName.trim()
+    );
     res.status(201).json({ success: true, data: result });
   } catch (error) {
     next(error);

@@ -61,7 +61,8 @@ export async function getMyCreditTransactionsHandler(
 ): Promise<void> {
   try {
     const actorMemberId = getActorMemberId(req);
-    const transactions = await getCreditTransactionsForMembership(actorMemberId);
+    const transactions =
+      await getCreditTransactionsForMembership(actorMemberId);
 
     res.json({ success: true, data: transactions });
   } catch (error) {

@@ -5,6 +5,7 @@ import attendanceRoutes from './routes/attendanceRoutes';
 import auditLogRoutes from './routes/auditLogRoutes';
 import clubRoutes from './routes/clubRoutes';
 import reportRoutes from './routes/reportRoutes';
+import analyticsRoutes from './routes/analyticsRoutes';
 import { requestLogger } from './middleware/requestLogger';
 import { errorHandler } from './middleware/errorHandler';
 import { apiKeyAuth } from './middleware/apiKeyAuth';
@@ -24,6 +25,7 @@ app.use('/api', apiKeyAuth, attendanceRoutes);
 app.use('/api', apiKeyAuth, auditLogRoutes);
 app.use('/api', apiKeyAuth, clubRoutes);
 app.use('/api', apiKeyAuth, reportRoutes);
+app.use('/api', apiKeyAuth, analyticsRoutes);
 
 app.use(errorHandler);
 
