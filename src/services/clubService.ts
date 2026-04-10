@@ -257,7 +257,7 @@ export async function joinClub(
   joinCode: string,
   firstName: string,
   lastName: string
-): Promise<{ membershipId: string; clubId: string }> {
+): Promise<{ membershipId: string; clubId: string; userId: string }> {
   const clubResult = await pool.query<{ id: string }>(
     `SELECT id FROM clubs WHERE UPPER(join_code) = UPPER($1) LIMIT 1`,
     [joinCode.trim()]
@@ -296,14 +296,14 @@ export async function joinClub(
      VALUES ($1, $2, 'member', 'active', 0, $3, $4) RETURNING id`,
     [clubId, userId, recoveryCode, displayName]
   );
-  return { membershipId: result.rows[0].id, clubId };
+  return { membershipId: result.rows[0].id, clubId, userId };
 }
 
 export async function createClub(
   name: string,
   firstName: string,
   lastName: string
-): Promise<{ membershipId: string; clubId: string }> {
+): Promise<{ membershipId: string; clubId: string; userId: string }> {
   const trimmed = name.trim();
   if (!trimmed)
     throw new AppError(400, 'INVALID_NAME', 'Club name cannot be empty.');
@@ -334,7 +334,7 @@ export async function createClub(
   logger.info('[createClub] membership inserted', {
     membershipId: memberResult.rows[0].id,
   });
-  return { membershipId: memberResult.rows[0].id, clubId };
+  return { membershipId: memberResult.rows[0].id, clubId, userId };
 }
 
 // ─── Regenerate join code ─────────────────────────────────────────────────────
