@@ -296,13 +296,13 @@ async function main(): Promise<void> {
 
   // ── Step 5: Sessions ─────────────────────────────────────────────────────
   //
-  // Distribute ~100 sessions over 52 weeks (1–3 per week).
-  // week 51 = oldest (~364 days ago), week 0 = most recent (~7 days ago).
+  // Past: ~100 sessions over 52 weeks. Upcoming: 10 sessions over next 4 weeks.
 
   type SessionRecord = { id: string; startsAt: Date };
   const sessions: SessionRecord[] = [];
   const sessionRows: unknown[][] = [];
 
+  // Past sessions
   for (let week = 51; week >= 0 && sessions.length < 100; week--) {
     const perWeek = randomInt(1, 3);
     const weekDays = shuffle([0, 1, 2, 3, 4, 5, 6]).slice(0, perWeek);
@@ -327,6 +327,33 @@ async function main(): Promise<void> {
         pickRandom(locationIds),
         startsAt,
         startsAt, // created_at, updated_at
+      ]);
+    }
+  }
+
+  // Upcoming sessions (next 4 weeks, ~2-3 per week)
+  for (let week = 0; week < 4; week++) {
+    const perWeek = randomInt(2, 3);
+    const weekDays = shuffle([0, 1, 2, 3, 4, 5, 6]).slice(0, perWeek);
+
+    for (const dayOfWeek of weekDays) {
+      const daysAhead = week * 7 + dayOfWeek + 1; // always >= 1 day ahead
+      const slot = pickRandom(TIME_SLOTS);
+      const startsAt = new Date();
+      startsAt.setDate(startsAt.getDate() + daysAhead);
+      startsAt.setHours(slot.hour, slot.minute, 0, 0);
+
+      const sessionId = randomUUID();
+      sessions.push({ id: sessionId, startsAt });
+      sessionRows.push([
+        sessionId,
+        clubId,
+        pickRandom(SESSION_TITLES),
+        startsAt,
+        null, // no end time for upcoming sessions
+        pickRandom(locationIds),
+        new Date(),
+        new Date(),
       ]);
     }
   }
