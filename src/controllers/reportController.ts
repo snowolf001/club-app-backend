@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
 import { isValidUUID } from '../utils/validators';
-import { getCurrentUserId } from '../lib/auth';
+import { getActorMemberId } from '../lib/auth';
 import { pool } from '../db/pool';
 import {
   getSessionAttendees,
@@ -13,12 +13,12 @@ import {
 // ─── Permission helpers ───────────────────────────────────────────────────────
 
 async function requireReportAccess(
-  userId: string,
+  membershipId: string,
   clubId: string
 ): Promise<void> {
   const result = await pool.query<{ role: string }>(
-    `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 LIMIT 1`,
-    [userId, clubId]
+    `SELECT role FROM memberships WHERE id = $1 AND club_id = $2 LIMIT 1`,
+    [membershipId, clubId]
   );
   const role = result.rows[0]?.role;
   if (!role || !['host', 'admin', 'owner'].includes(role)) {
@@ -58,7 +58,7 @@ export async function getSessionAttendeesHandler(
     }
     const clubId = sessionRow.rows[0].club_id;
 
-    const actorId = getCurrentUserId(req);
+    const actorId = getActorMemberId(req);
     await requireReportAccess(actorId, clubId);
 
     const data = await getSessionAttendees(sessionId);
@@ -96,7 +96,7 @@ export async function getMemberHistoryHandler(
     }
     const clubId = memRow.rows[0].club_id;
 
-    const actorId = getCurrentUserId(req);
+    const actorId = getActorMemberId(req);
     await requireReportAccess(actorId, clubId);
 
     const startDate =
@@ -148,7 +148,7 @@ export async function getAttendanceReportHandler(
       );
     }
 
-    const actorId = getCurrentUserId(req);
+    const actorId = getActorMemberId(req);
     await requireReportAccess(actorId, clubId);
 
     const startDate =
@@ -228,7 +228,7 @@ export async function getSessionsBreakdownHandler(
       );
     }
 
-    const actorId = getCurrentUserId(req);
+    const actorId = getActorMemberId(req);
     await requireReportAccess(actorId, clubId);
 
     const lastOnly = req.query['last'] === 'true';
