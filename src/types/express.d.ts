@@ -7,6 +7,9 @@ declare global {
         id: string;
         role?: 'member' | 'host' | 'owner' | 'admin';
       };
+      actor?: {
+        memberId: string;
+      };
     }
   }
 }

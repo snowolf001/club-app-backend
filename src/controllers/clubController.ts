@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
 import { isValidUUID } from '../utils/validators';
-import { getCurrentUserId } from '../lib/auth';
+import { getActorMemberId } from '../lib/auth';
 import { pool } from '../db/pool';
 import { createAuditLog } from '../services/auditLogService';
 import {
@@ -85,10 +85,10 @@ export async function updateClubSettingsHandler(
     }
 
     // Only admins and owners may update club settings
-    const actorUserId = getCurrentUserId(req);
-    const actorRow = await pool.query<{ role: string }>(
-      `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
-      [actorUserId, clubId]
+    const actorMemberId = getActorMemberId(req);
+    const actorRow = await pool.query<{ role: string; user_id: string }>(
+      `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [actorMemberId]
     );
     if (!['admin', 'owner'].includes(actorRow.rows[0]?.role ?? '')) {
       throw new AppError(
@@ -115,7 +115,7 @@ export async function updateClubSettingsHandler(
 
     void createAuditLog({
       clubId,
-      actorUserId: getCurrentUserId(req),
+      actorUserId: actorRow.rows[0].user_id,
       entityType: 'club',
       entityId: clubId,
       action: 'club_settings_updated',
@@ -192,21 +192,10 @@ export async function addClubLocationHandler(
     }
 
     // Only admin or owner may add locations
-    const { membershipId, name, address } = req.body as {
-      membershipId?: unknown;
-      name?: unknown;
-      address?: unknown;
-    };
-    if (typeof membershipId !== 'string' || !isValidUUID(membershipId)) {
-      throw new AppError(
-        400,
-        'INVALID_MEMBERSHIP_ID',
-        'membershipId is required.'
-      );
-    }
+    const actorMemberId = getActorMemberId(req);
     const memberRow = await pool.query<{ role: string; user_id: string }>(
-      `SELECT role, user_id FROM memberships WHERE id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
-      [membershipId, clubId]
+      `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [actorMemberId]
     );
     const row = memberRow.rows[0];
     if (!row || !['admin', 'owner'].includes(row.role)) {
@@ -216,6 +205,10 @@ export async function addClubLocationHandler(
         'Only admins or owners can add locations.'
       );
     }
+    const { name, address } = req.body as {
+      name?: unknown;
+      address?: unknown;
+    };
     if (typeof name !== 'string' || !name.trim()) {
       throw new AppError(400, 'INVALID_LOCATION', 'Location name is required.');
     }
@@ -266,19 +259,13 @@ export async function deleteClubLocationHandler(
       );
     }
 
-    const userId = req.query['membershipId'] as string | undefined;
+    const actorMemberId = getActorMemberId(req);
     const memberRow = await pool.query<{ role: string; user_id: string }>(
-      `SELECT role, user_id FROM memberships WHERE id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
-      [userId, clubId]
+      `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [actorMemberId]
     );
     const role = memberRow.rows[0]?.role;
-    const actorUserId = memberRow.rows[0]?.user_id;
-    if (
-      !userId ||
-      !isValidUUID(userId) ||
-      !role ||
-      !['admin', 'owner'].includes(role)
-    ) {
+    if (!role || !['admin', 'owner'].includes(role)) {
       throw new AppError(
         403,
         'FORBIDDEN',
@@ -290,7 +277,7 @@ export async function deleteClubLocationHandler(
 
     void createAuditLog({
       clubId,
-      actorUserId: actorUserId ?? '',
+      actorUserId: memberRow.rows[0].user_id,
       entityType: 'location',
       entityId: locationId,
       action: 'location_deleted',
@@ -311,8 +298,6 @@ export async function joinClubHandler(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as Request & { user?: { id: string } }).user?.id;
-    if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Not authenticated.');
     const { joinCode, firstName, lastName } = req.body as {
       joinCode?: unknown;
       firstName?: unknown;
@@ -327,12 +312,7 @@ export async function joinClubHandler(
     if (typeof lastName !== 'string' || !lastName.trim()) {
       throw new AppError(400, 'INVALID_NAME', 'Last name is required.');
     }
-    const result = await joinClub(
-      joinCode.trim(),
-      userId,
-      firstName.trim(),
-      lastName.trim()
-    );
+    const result = await joinClub(joinCode.trim(), firstName.trim(), lastName.trim());
     res.status(201).json({ success: true, data: result });
   } catch (error) {
     next(error);
@@ -347,13 +327,21 @@ export async function createClubHandler(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as Request & { user?: { id: string } }).user?.id;
-    if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Not authenticated.');
-    const { name } = req.body as { name?: unknown };
+    const { name, firstName, lastName } = req.body as {
+      name?: unknown;
+      firstName?: unknown;
+      lastName?: unknown;
+    };
     if (typeof name !== 'string' || !name.trim()) {
       throw new AppError(400, 'INVALID_NAME', 'Club name is required.');
     }
-    const result = await createClub(name.trim(), userId);
+    if (typeof firstName !== 'string' || !firstName.trim()) {
+      throw new AppError(400, 'INVALID_NAME', 'First name is required.');
+    }
+    if (typeof lastName !== 'string' || !lastName.trim()) {
+      throw new AppError(400, 'INVALID_NAME', 'Last name is required.');
+    }
+    const result = await createClub(name.trim(), firstName.trim(), lastName.trim());
     res.status(201).json({ success: true, data: result });
   } catch (error) {
     next(error);
@@ -376,8 +364,8 @@ export async function regenerateJoinCodeHandler(
         'clubId must be a valid UUID.'
       );
     }
-    const actorUserId = getCurrentUserId(req);
-    const result = await regenerateJoinCode(clubId, actorUserId);
+    const actorMemberId = getActorMemberId(req);
+    const result = await regenerateJoinCode(clubId, actorMemberId);
     res.json({ success: true, data: result });
   } catch (error) {
     next(error);
@@ -400,7 +388,7 @@ export async function transferOwnershipHandler(
         'clubId must be a valid UUID.'
       );
     }
-    const actorUserId = getCurrentUserId(req);
+    const actorMemberId = getActorMemberId(req);
     const { targetMembershipId } = req.body as { targetMembershipId?: unknown };
     if (
       typeof targetMembershipId !== 'string' ||
@@ -412,7 +400,7 @@ export async function transferOwnershipHandler(
         'targetMembershipId must be a valid UUID.'
       );
     }
-    await transferOwnership(clubId, actorUserId, targetMembershipId);
+    await transferOwnership(clubId, actorMemberId, targetMembershipId);
     res.json({ success: true, data: null });
   } catch (error) {
     next(error);
@@ -443,8 +431,8 @@ export async function removeMemberHandler(
         'membershipId must be a valid UUID.'
       );
     }
-    const actorUserId = getCurrentUserId(req);
-    await removeMember(clubId, membershipId, actorUserId);
+    const actorMemberId = getActorMemberId(req);
+    await removeMember(clubId, membershipId, actorMemberId);
     res.json({ success: true, data: null });
   } catch (error) {
     next(error);
@@ -467,8 +455,8 @@ export async function leaveClubHandler(
         'clubId must be a valid UUID.'
       );
     }
-    const userId = getCurrentUserId(req);
-    await leaveClub(clubId, userId);
+    const actorMemberId = getActorMemberId(req);
+    await leaveClub(actorMemberId);
     res.json({ success: true, data: null });
   } catch (error) {
     next(error);

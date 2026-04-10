@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
 import { isValidUUID } from '../utils/validators';
-import { getCurrentUserId } from '../lib/auth';
+import { getActorMemberId } from '../lib/auth';
 import {
   getMyMembership,
   addCredits,
@@ -19,27 +19,8 @@ export async function getMyMembershipHandler(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = getCurrentUserId(req);
-    const clubId = req.query['clubId'];
-
-    if (typeof clubId !== 'string' || clubId.trim() === '') {
-      throw new AppError(
-        400,
-        'MISSING_CLUB_ID',
-        'clubId query parameter is required.'
-      );
-    }
-
-    if (!isValidUUID(clubId)) {
-      throw new AppError(
-        400,
-        'INVALID_CLUB_ID',
-        'clubId must be a valid UUID.'
-      );
-    }
-
-    const membership = await getMyMembership(clubId, userId);
-
+    const actorMemberId = getActorMemberId(req);
+    const membership = await getMembershipById(actorMemberId);
     res.json({ success: true, data: membership });
   } catch (error) {
     next(error);
@@ -54,7 +35,7 @@ export async function addCreditsHandler(
   next: NextFunction
 ): Promise<void> {
   try {
-    const actorUserId = getCurrentUserId(req);
+    const actorMemberId = getActorMemberId(req);
     const membershipId = req.params['membershipId'] as string;
 
     if (!isValidUUID(membershipId)) {
@@ -85,7 +66,7 @@ export async function addCreditsHandler(
 
     const membership = await addCredits(
       membershipId,
-      actorUserId,
+      actorMemberId,
       amount,
       reason.trim()
     );
@@ -129,7 +110,7 @@ export async function updateMemberRoleHandler(
   next: NextFunction
 ): Promise<void> {
   try {
-    const actorUserId = getCurrentUserId(req);
+    const actorMemberId = getActorMemberId(req);
     const membershipId = req.params['membershipId'] as string;
 
     if (!isValidUUID(membershipId)) {
@@ -152,7 +133,7 @@ export async function updateMemberRoleHandler(
 
     const membership = await updateMemberRole(
       membershipId,
-      actorUserId,
+      actorMemberId,
       role as 'member' | 'host' | 'admin'
     );
     res.json({ success: true, data: membership });

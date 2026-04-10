@@ -56,10 +56,9 @@ router.post(
 );
 router.post(
   '/clubs/:clubId/recover',
-  identifyUser,
   recoverClubMembershipHandler
 );
-router.post('/clubs/join', identifyUser, joinClubHandler);
-router.post('/clubs', identifyUser, createClubHandler);
+router.post('/clubs/join', joinClubHandler);
+router.post('/clubs', createClubHandler);
 
 export default router;

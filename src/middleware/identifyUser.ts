@@ -1,26 +1,27 @@
 import { Request, Response, NextFunction } from 'express';
 
 /**
- * Resolves the caller's identity from the x-user-id request header.
+ * Resolves the caller's membership identity from the x-member-id request header.
  * Must run after apiKeyAuth.
+ * Sets req.actor = { memberId } — controllers use this for DB-based authorization.
  */
 export function identifyUser(
   req: Request,
   res: Response,
   next: NextFunction
 ): void {
-  const userId = req.header('x-user-id');
-  if (!userId) {
+  const memberId = req.header('x-member-id');
+  if (!memberId) {
     res.status(401).json({
       success: false,
       error: {
-        code: 'UNAUTHORIZED',
-        message: 'Missing x-user-id header',
+        code: 'MISSING_MEMBER_ID',
+        message: 'Missing x-member-id header.',
         details: null,
       },
     });
     return;
   }
-  req.user = { id: userId };
+  req.actor = { memberId };
   next();
 }

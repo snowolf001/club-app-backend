@@ -14,10 +14,12 @@ import { identifyUser } from '../middleware/identifyUser';
 
 const router = Router();
 
+// Bootstrap endpoint — no membershipId yet, must come before identifyUser
+router.post('/memberships/recover', recoverMembershipHandler);
+
 router.use(identifyUser);
 
 router.get('/memberships/me', getMyMembershipHandler);
-router.post('/memberships/recover', recoverMembershipHandler);
 router.get('/memberships/:membershipId', getMembershipByIdHandler);
 router.post('/memberships/:membershipId/credits', addCreditsHandler);
 router.patch('/memberships/:membershipId/role', updateMemberRoleHandler);

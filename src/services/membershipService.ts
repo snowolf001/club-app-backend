@@ -153,7 +153,7 @@ export async function getMembershipByRecoveryCode(
 
 export async function addCredits(
   membershipId: string,
-  actorUserId: string,
+  actorMembershipId: string,
   amount: number,
   reason: string
 ): Promise<MembershipItem> {
@@ -188,9 +188,9 @@ export async function addCredits(
     }
 
     // Verify actor is admin or owner of the same club
-    const actorRow = await client.query<{ role: string }>(
-      `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
-      [actorUserId, membership.club_id]
+    const actorRow = await client.query<{ role: string; user_id: string }>(
+      `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [actorMembershipId]
     );
     if (!['admin', 'owner'].includes(actorRow.rows[0]?.role ?? '')) {
       throw new AppError(
@@ -245,14 +245,14 @@ export async function addCredits(
         membership.user_id,
         amount,
         reason,
-        actorUserId,
+        actorRow.rows[0].user_id,
         'manual_adjustment',
       ]
     );
 
     await writeAuditLog(client, {
       clubId: membership.club_id,
-      actorUserId,
+      actorUserId: actorRow.rows[0].user_id,
       targetUserId: membership.user_id,
       entityType: 'membership',
       entityId: membershipId,
@@ -264,7 +264,7 @@ export async function addCredits(
 
     logger.info('credits added', {
       membershipId,
-      actorUserId,
+      actorMembershipId,
       targetUserId: membership.user_id,
       amount,
       previousCredits,
@@ -291,7 +291,7 @@ export async function addCredits(
 
 export async function updateMemberRole(
   membershipId: string,
-  actorUserId: string,
+  actorMembershipId: string,
   newRole: 'member' | 'host' | 'admin'
 ): Promise<MembershipItem> {
   const client = await pool.connect();
@@ -333,9 +333,13 @@ export async function updateMemberRole(
     }
 
     // Verify actor has permission (must be admin or owner in the same club)
-    const actorResult = await client.query<{ role: string; id: string }>(
-      `SELECT id, role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
-      [actorUserId, target.club_id]
+    const actorResult = await client.query<{
+      role: string;
+      id: string;
+      user_id: string;
+    }>(
+      `SELECT id, role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [actorMembershipId]
     );
 
     const actorRole = actorResult.rows[0]?.role;
@@ -385,7 +389,7 @@ export async function updateMemberRole(
 
     await writeAuditLog(client, {
       clubId: target.club_id,
-      actorUserId,
+      actorUserId: actorResult.rows[0].user_id,
       targetUserId: target.user_id,
       entityType: 'membership',
       entityId: membershipId,
@@ -397,7 +401,7 @@ export async function updateMemberRole(
 
     logger.info('role changed', {
       membershipId,
-      actorUserId,
+      actorMembershipId,
       previousRole,
       newRole,
     });

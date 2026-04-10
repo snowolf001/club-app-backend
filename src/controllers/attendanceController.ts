@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
 import { isValidUUID } from '../utils/validators';
-import { getCurrentUserId } from '../lib/auth';
+import { getActorMemberId } from '../lib/auth';
 import {
   getAttendanceForUser,
   getAttendanceForMembership,
@@ -17,8 +17,8 @@ export async function getMyAttendanceHandler(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = getCurrentUserId(req);
-    const attendance = await getAttendanceForUser(userId);
+    const actorMemberId = getActorMemberId(req);
+    const attendance = await getAttendanceForMembership(actorMemberId);
 
     res.json({ success: true, data: attendance });
   } catch (error) {
@@ -60,8 +60,8 @@ export async function getMyCreditTransactionsHandler(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = getCurrentUserId(req);
-    const transactions = await getCreditTransactionsForUser(userId);
+    const actorMemberId = getActorMemberId(req);
+    const transactions = await getCreditTransactionsForMembership(actorMemberId);
 
     res.json({ success: true, data: transactions });
   } catch (error) {

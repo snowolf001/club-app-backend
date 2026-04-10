@@ -1,6 +1,6 @@
 import { pool } from '../db/pool';
 import { AppError } from '../errors/AppError';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { writeAuditLog, createAuditLog } from './auditLogService';
 import { logger } from '../lib/logger';
 
@@ -255,7 +255,6 @@ export async function deleteClubLocation(
 
 export async function joinClub(
   joinCode: string,
-  userId: string,
   firstName: string,
   lastName: string
 ): Promise<{ membershipId: string; clubId: string }> {
@@ -268,28 +267,11 @@ export async function joinClub(
   }
   const clubId = clubResult.rows[0].id;
 
+  const userId = randomUUID();
   const displayName = `${toTitleCase(firstName)} ${toTitleCase(lastName)}`;
 
   // Ensure a users row exists for this userId before any FK-dependent inserts.
   await ensureUserExists(userId, displayName);
-
-  // If this user already has a membership row (any status), return it active.
-  const existing = await pool.query<{ id: string; status: string }>(
-    `SELECT id, status FROM memberships WHERE club_id = $1 AND user_id = $2 LIMIT 1`,
-    [clubId, userId]
-  );
-  if ((existing.rowCount ?? 0) > 0) {
-    const mem = existing.rows[0];
-    if (mem.status !== 'active') {
-      // Reactivate — user must use the recovery flow; block self-rejoin.
-      throw new AppError(
-        409,
-        'DISPLAY_NAME_CONFLICT',
-        'This name already exists in this club. If you already joined this club before, please use your recovery code. Otherwise, choose a different name.'
-      );
-    }
-    return { membershipId: mem.id, clubId };
-  }
 
   // Check if the display_name is already taken by any row (active or removed).
   // The unique index enforces this at DB level too; we check first for a clean error.
@@ -319,26 +301,20 @@ export async function joinClub(
 
 export async function createClub(
   name: string,
-  userId: string
+  firstName: string,
+  lastName: string
 ): Promise<{ membershipId: string; clubId: string }> {
   const trimmed = name.trim();
   if (!trimmed)
     throw new AppError(400, 'INVALID_NAME', 'Club name cannot be empty.');
 
-  logger.info('[createClub] start', { userId, name: trimmed });
+  const userId = randomUUID();
+  const ownerDisplayName = `${toTitleCase(firstName)} ${toTitleCase(lastName)}`;
+
+  logger.info('[createClub] start', { name: trimmed });
 
   const joinCode = generateJoinCode();
 
-  // Ensure a users row exists for this userId before any FK-dependent inserts.
-  // First check if the user already exists so we can use their real name.
-  const existingUser = await pool.query<{ name: string }>(
-    `SELECT name FROM users WHERE id = $1 LIMIT 1`,
-    [userId]
-  );
-  logger.info('[createClub] existingUser query done', {
-    found: (existingUser.rowCount ?? 0) > 0,
-  });
-  const ownerDisplayName = existingUser.rows[0]?.name ?? trimmed;
   await ensureUserExists(userId, ownerDisplayName);
   logger.info('[createClub] ensureUserExists done', { ownerDisplayName });
 
@@ -365,14 +341,14 @@ export async function createClub(
 
 export async function regenerateJoinCode(
   clubId: string,
-  actorUserId: string
+  actorMembershipId: string
 ): Promise<{ joinCode: string }> {
-  const actorResult = await pool.query<{ role: string }>(
-    `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
-    [actorUserId, clubId]
+  const actorResult = await pool.query<{ role: string; user_id: string }>(
+    `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+    [actorMembershipId]
   );
-  const actorRole = actorResult.rows[0]?.role;
-  if (!actorRole || !['admin', 'owner'].includes(actorRole)) {
+  const actorRow = actorResult.rows[0];
+  if (!actorRow || !['admin', 'owner'].includes(actorRow.role)) {
     throw new AppError(
       403,
       'FORBIDDEN',
@@ -388,7 +364,7 @@ export async function regenerateJoinCode(
 
   void createAuditLog({
     clubId,
-    actorUserId,
+    actorUserId: actorRow.user_id,
     entityType: 'club',
     entityId: clubId,
     action: 'join_code_regenerated',
@@ -402,16 +378,20 @@ export async function regenerateJoinCode(
 
 export async function transferOwnership(
   clubId: string,
-  actorUserId: string,
+  actorMembershipId: string,
   targetMembershipId: string
 ): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    const actorResult = await client.query<{ id: string; role: string }>(
-      `SELECT id, role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
-      [actorUserId, clubId]
+    const actorResult = await client.query<{
+      id: string;
+      role: string;
+      user_id: string;
+    }>(
+      `SELECT id, role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [actorMembershipId]
     );
     const actor = actorResult.rows[0];
     if (!actor || actor.role !== 'owner') {
@@ -458,7 +438,7 @@ export async function transferOwnership(
 
     await writeAuditLog(client, {
       clubId,
-      actorUserId,
+      actorUserId: actor.user_id,
       targetUserId: target.user_id,
       entityType: 'club',
       entityId: clubId,
@@ -477,10 +457,15 @@ export async function transferOwnership(
 
 // ─── Leave club ───────────────────────────────────────────────────────────────
 
-export async function leaveClub(clubId: string, userId: string): Promise<void> {
-  const memberRow = await pool.query<{ id: string; role: string }>(
-    `SELECT id, role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
-    [userId, clubId]
+export async function leaveClub(membershipId: string): Promise<void> {
+  const memberRow = await pool.query<{
+    id: string;
+    role: string;
+    user_id: string;
+    club_id: string;
+  }>(
+    `SELECT id, role, user_id, club_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+    [membershipId]
   );
   const member = memberRow.rows[0];
   if (!member) {
@@ -496,7 +481,7 @@ export async function leaveClub(clubId: string, userId: string): Promise<void> {
     const adminRow = await pool.query<{ count: string }>(
       `SELECT COUNT(*) AS count FROM memberships
        WHERE club_id = $1 AND role = 'admin' AND status = 'active'`,
-      [clubId]
+      [member.club_id]
     );
     const adminCount = parseInt(adminRow.rows[0].count, 10);
     if (adminCount > 0) {
@@ -520,8 +505,8 @@ export async function leaveClub(clubId: string, userId: string): Promise<void> {
   );
 
   void createAuditLog({
-    clubId,
-    actorUserId: userId,
+    clubId: member.club_id,
+    actorUserId: member.user_id,
     entityType: 'membership',
     entityId: member.id,
     action: 'member_left',
@@ -534,7 +519,7 @@ export async function leaveClub(clubId: string, userId: string): Promise<void> {
 export async function removeMember(
   clubId: string,
   membershipId: string,
-  actorUserId: string
+  actorMembershipId: string
 ): Promise<void> {
   const targetResult = await pool.query<{
     user_id: string;
@@ -555,11 +540,12 @@ export async function removeMember(
     );
   }
 
-  const actorResult = await pool.query<{ role: string }>(
-    `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
-    [actorUserId, clubId]
+  const actorResult = await pool.query<{ role: string; user_id: string }>(
+    `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+    [actorMembershipId]
   );
-  const actorRole = actorResult.rows[0]?.role;
+  const actorRow = actorResult.rows[0];
+  const actorRole = actorRow?.role;
   if (!actorRole || !['admin', 'owner'].includes(actorRole)) {
     throw new AppError(403, 'FORBIDDEN', 'Only admins can remove members.');
   }
@@ -574,7 +560,7 @@ export async function removeMember(
 
   void createAuditLog({
     clubId,
-    actorUserId,
+    actorUserId: actorRow.user_id,
     targetUserId: target.user_id,
     entityType: 'membership',
     entityId: membershipId,

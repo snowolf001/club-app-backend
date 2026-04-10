@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
 import { isValidUUID } from '../utils/validators';
-import { getCurrentUserId } from '../lib/auth';
+import { getCurrentUserId, getActorMemberId } from '../lib/auth';
 import { pool } from '../db/pool';
 import { createAuditLog } from '../services/auditLogService';
 import {
@@ -85,10 +85,8 @@ export async function postSessionCheckIn(
 ): Promise<void> {
   try {
     const sessionId = req.params['sessionId'] as string;
-    const { membershipId, creditsUsed: rawCreditsUsed } = req.body as Record<
-      string,
-      unknown
-    >;
+    const membershipId = getActorMemberId(req);
+    const { creditsUsed: rawCreditsUsed } = req.body as Record<string, unknown>;
 
     if (!isValidUUID(sessionId)) {
       throw new AppError(
@@ -98,11 +96,11 @@ export async function postSessionCheckIn(
       );
     }
 
-    if (typeof membershipId !== 'string' || !isValidUUID(membershipId)) {
+    if (!isValidUUID(membershipId)) {
       throw new AppError(
         400,
         'INVALID_MEMBERSHIP_ID',
-        'membershipId must be a valid UUID.'
+        'x-member-id header must be a valid UUID.'
       );
     }
 
@@ -189,10 +187,10 @@ export async function createSessionHandler(
     }
 
     // Only hosts, admins, and owners may create sessions
-    const actorUserId = getCurrentUserId(req);
-    const actorRow = await pool.query<{ role: string }>(
-      `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
-      [actorUserId, clubId]
+    const actorMemberId = getActorMemberId(req);
+    const actorRow = await pool.query<{ role: string; user_id: string }>(
+      `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [actorMemberId]
     );
     if (!['host', 'admin', 'owner'].includes(actorRow.rows[0]?.role ?? '')) {
       throw new AppError(
@@ -262,7 +260,7 @@ export async function createSessionHandler(
 
     void createAuditLog({
       clubId,
-      actorUserId: getCurrentUserId(req),
+      actorUserId: actorRow.rows[0].user_id,
       entityType: 'session',
       entityId: session.id,
       sessionId: session.id,
@@ -291,7 +289,17 @@ export async function postManualCheckIn(
 ): Promise<void> {
   try {
     const sessionId = req.params['sessionId'] as string;
-    const actorUserId = getCurrentUserId(req);
+    const actorMemberId = getActorMemberId(req);
+
+    // Resolve actor's user_id for manual check-in audit trail
+    const actorRow = await pool.query<{ user_id: string }>(
+      `SELECT user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [actorMemberId]
+    );
+    if (!actorRow.rows[0]) {
+      throw new AppError(401, 'UNAUTHORIZED', 'Actor membership not found.');
+    }
+    const actorUserId = actorRow.rows[0].user_id;
 
     if (!isValidUUID(sessionId)) {
       throw new AppError(
@@ -362,7 +370,7 @@ export async function deleteSessionHandler(
 ): Promise<void> {
   try {
     const sessionId = req.params['sessionId'] as string;
-    const userId = getCurrentUserId(req);
+    const actorMemberId = getActorMemberId(req);
 
     if (!isValidUUID(sessionId)) {
       throw new AppError(
@@ -376,9 +384,9 @@ export async function deleteSessionHandler(
     const session = await getSessionById(sessionId);
 
     // Check caller's membership role in the club
-    const memberRow = await pool.query<{ role: string }>(
-      `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
-      [userId, session.clubId]
+    const memberRow = await pool.query<{ role: string; user_id: string }>(
+      `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [actorMemberId]
     );
     const role = memberRow.rows[0]?.role;
     if (!role || !['owner', 'admin', 'host'].includes(role)) {
@@ -393,7 +401,7 @@ export async function deleteSessionHandler(
 
     void createAuditLog({
       clubId: session.clubId,
-      actorUserId: userId,
+      actorUserId: memberRow.rows[0].user_id,
       entityType: 'session',
       entityId: sessionId,
       sessionId,
