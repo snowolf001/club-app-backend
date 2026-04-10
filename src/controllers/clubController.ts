@@ -83,6 +83,21 @@ export async function updateClubSettingsHandler(
         'clubId must be a valid UUID.'
       );
     }
+
+    // Only admins and owners may update club settings
+    const actorUserId = getCurrentUserId(req);
+    const actorRow = await pool.query<{ role: string }>(
+      `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+      [actorUserId, clubId]
+    );
+    if (!['admin', 'owner'].includes(actorRow.rows[0]?.role ?? '')) {
+      throw new AppError(
+        403,
+        'UNAUTHORIZED',
+        'Only admins and owners can update club settings.'
+      );
+    }
+
     const { allowMemberBackfill, memberBackfillHours, hostBackfillHours } =
       req.body as Record<string, unknown>;
     const settings = await updateClubSettings(clubId, {

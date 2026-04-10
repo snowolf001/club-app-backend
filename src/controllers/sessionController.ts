@@ -188,6 +188,20 @@ export async function createSessionHandler(
       );
     }
 
+    // Only hosts, admins, and owners may create sessions
+    const actorUserId = getCurrentUserId(req);
+    const actorRow = await pool.query<{ role: string }>(
+      `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+      [actorUserId, clubId]
+    );
+    if (!['host', 'admin', 'owner'].includes(actorRow.rows[0]?.role ?? '')) {
+      throw new AppError(
+        403,
+        'UNAUTHORIZED',
+        'Only hosts, admins, and owners can create sessions.'
+      );
+    }
+
     // locationId is required
     if (locationId === undefined || locationId === null || locationId === '') {
       throw new AppError(

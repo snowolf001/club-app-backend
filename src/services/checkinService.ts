@@ -24,6 +24,7 @@ type SessionRow = {
   starts_at: string;
   ends_at: string | null;
   capacity: number | null;
+  status: string;
 };
 
 type MembershipRow = {
@@ -55,7 +56,7 @@ async function getSessionForCheckin(
 ): Promise<SessionRow> {
   const result = await client.query<SessionRow>(
     `
-      SELECT id, club_id, starts_at, ends_at, capacity
+      SELECT id, club_id, starts_at, ends_at, capacity, status
       FROM sessions
       WHERE id = $1
       LIMIT 1
@@ -68,7 +69,17 @@ async function getSessionForCheckin(
     throw new AppError(404, 'SESSION_NOT_FOUND', 'Session not found.');
   }
 
-  return result.rows[0];
+  const session = result.rows[0];
+
+  if (session.status === 'closed') {
+    throw new AppError(
+      409,
+      'SESSION_CLOSED',
+      'This session is no longer accepting check-ins.'
+    );
+  }
+
+  return session;
 }
 
 async function ensureSessionNotFull(

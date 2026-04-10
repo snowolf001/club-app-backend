@@ -13,6 +13,7 @@ type SessionRow = {
   location_id: string | null;
   location_name: string | null;
   capacity: number | null;
+  status: 'active' | 'closed';
 };
 
 type CheckedInRow = {
@@ -36,6 +37,7 @@ export type SessionItem = {
   locationId: string | null;
   locationName: string | null;
   capacity: number | null;
+  status: 'active' | 'closed';
 };
 
 export type CheckedInMember = {
@@ -60,12 +62,13 @@ function mapSessionRow(row: SessionRow): SessionItem {
     locationId: row.location_id,
     locationName: row.location_name,
     capacity: row.capacity,
+    status: row.status,
   };
 }
 
 const SESSION_SELECT = `
   SELECT s.id, s.club_id, s.title, s.starts_at, s.ends_at, s.created_at,
-         s.location_id, cl.name AS location_name, s.capacity
+         s.location_id, cl.name AS location_name, s.capacity, s.status
   FROM sessions s
   LEFT JOIN club_locations cl ON cl.id = s.location_id
 `;
