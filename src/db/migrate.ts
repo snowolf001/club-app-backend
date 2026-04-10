@@ -34,6 +34,33 @@ export async function runMigrations(pool: Pool): Promise<void> {
   );
   const applied = new Set(result.rows.map((r) => r.filename));
 
+  // Backward compatibility for existing databases:
+  // If the "users" table already exists but 001_initial_schema.sql is not in schema_migrations,
+  // it means this database was created before the auto-migration system was added.
+  // We mark the baseline migration as applied to prevent "relation already exists" errors.
+  if (
+    files.includes('001_initial_schema.sql') &&
+    !applied.has('001_initial_schema.sql')
+  ) {
+    const tableCheck = await pool.query<{ exists: boolean }>(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_schema = 'public'
+        AND table_name = 'users'
+      ) as "exists"
+    `);
+
+    if (tableCheck.rows[0].exists) {
+      logger.info(
+        '[migrate] Existing users table detected. Baselining 001_initial_schema.sql.'
+      );
+      await pool.query(
+        "INSERT INTO schema_migrations (filename) VALUES ('001_initial_schema.sql')"
+      );
+      applied.add('001_initial_schema.sql');
+    }
+  }
+
   const pending = files.filter((f) => !applied.has(f));
 
   if (pending.length === 0) {
