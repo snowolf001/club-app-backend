@@ -187,16 +187,16 @@ export async function addCredits(
       );
     }
 
-    // Verify actor is admin or owner of the same club
+    // Verify actor is admin, owner, or host of the same club
     const actorRow = await client.query<{ role: string; user_id: string }>(
       `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
       [actorMembershipId]
     );
-    if (!['admin', 'owner'].includes(actorRow.rows[0]?.role ?? '')) {
+    if (!['admin', 'owner', 'host'].includes(actorRow.rows[0]?.role ?? '')) {
       throw new AppError(
         403,
         'UNAUTHORIZED',
-        'Only admins and owners can adjust member credits.'
+        'Only admins, owners, and hosts can adjust member credits.'
       );
     }
 
