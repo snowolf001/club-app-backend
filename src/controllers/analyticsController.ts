@@ -1,6 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
-import { ALLOWED_EVENTS, trackEvent } from '../services/analyticsService';
+import {
+  ALLOWED_EVENTS,
+  trackEvent,
+  getDashboardStats,
+} from '../services/analyticsService';
 
 /**
  * POST /api/track
@@ -58,6 +62,25 @@ export async function postTrackEvent(
     });
 
     res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/analytics (Mapped as /analytics in app.ts)
+ *
+ * Exposes a simple dashboard summary.
+ * Requires x-api-key.
+ */
+export async function getAnalyticsSummary(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const stats = await getDashboardStats();
+    res.json(stats);
   } catch (error) {
     next(error);
   }

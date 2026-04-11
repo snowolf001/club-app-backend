@@ -1,0 +1,40 @@
+# Members
+
+| Name             | Role   | Credits | Recovery Code  |
+| ---------------- | ------ | ------- | -------------- |
+| Chris Park       | host   | 38      | 8C88-8C11-02E3 |
+| David Silva      | host   | 28      | EBA1-ED57-CF96 |
+| Lucas Brown      | host   | 28      | 3C35-DA54-2013 |
+| Sarah Kim        | host   | 37      | 3C2F-C7B6-F9AA |
+| Aisha Thompson   | member | 19      | 3574-FF83-0C55 |
+| Angela Murphy    | member | 20      | 56AA-14AB-77D8 |
+| Brian Fischer    | member | 54      | 85CB-AE17-9B6E |
+| Cindy Ali        | member | 47      | 4840-877A-0F1B |
+| Daniel Cohen     | member | 34      | 2636-D3C9-E66D |
+| Emily Dubois     | member | 20      | 766E-FB3C-FD7B |
+| Eric Tremblay    | member | 46      | 9AD2-A796-2FE2 |
+| James Williams   | member | 15      | 3141-16C5-CD0A |
+| Jason Novak      | member | 25      | DC2B-CC67-82BD |
+| Jessica Martinez | member | 37      | 4870-5C10-2FD2 |
+| Kevin O'Connor   | member | 24      | 2063-3967-6C68 |
+| Lisa Becker      | member | 38      | 34E4-8A1E-2C05 |
+| Marcus Johnson   | member | 14      | D836-659D-1EE5 |
+| Maya Anderson    | member | 25      | 05E7-8414-A930 |
+| Michael Rossi    | member | 36      | BD89-6D4E-1BD3 |
+| Nina Jensen      | member | 49      | 83EA-FD3A-C195 |
+| Omar Hassan      | member | 30      | DF70-892F-A765 |
+| Priya Patel      | member | 20      | ECF3-8320-A2DD |
+| Rachel Schmidt   | member | 20      | 6C83-3C55-F648 |
+| Ryan Garcia      | member | 27      | 4069-E66A-E314 |
+| Sofia Rodriguez  | member | 38      | 892B-F739-0036 |
+| Sophia Costa     | member | 16      | 43B7-2222-66C4 |
+| Tony Romano      | member | 50      | B1E5-C9DA-DAF3 |
+| Victor Ivanova   | member | 49      | 29AF-B372-3817 |
+| Yuki Tanaka      | member | 52      | 6BBA-0E52-2258 |
+| Alex Bennett     | owner  | 44      | A419-EECD-4BE8 |
+| Jane Doe         | owner  | 0       | 63A2-589B-6CE4 |
+| Jane Doe         | owner  | 0       | 7DC0-A4E6-7857 |
+| Kwmoml Zuzdgk    | owner  | 0       | 497A-6142-265C |
+| Pllsml Ztsymr    | owner  | 0       | 5FB3-1944-6E84 |
+| Pllsml Ztsymr    | owner  | 0       | 0075-87EB-7104 |
+| Pllsml Ztsymr    | owner  | 0       | 715F-C42C-1FEE |

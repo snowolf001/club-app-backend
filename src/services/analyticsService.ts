@@ -71,26 +71,71 @@ export async function trackEvent(params: TrackEventParams): Promise<void> {
       return;
     }
 
+    const properties = {
+      success: params.success ?? null,
+      error_code: params.errorCode ?? null,
+      source_screen: params.sourceScreen ?? null,
+      platform: params.platform ?? null,
+      app_version: params.appVersion ?? null,
+      club_id_hash: params.clubId ? hashId(params.clubId) : null,
+      session_id_hash: params.sessionId ? hashId(params.sessionId) : null,
+    };
+
     await pool.query(
       `INSERT INTO analytics_events
-         (event_name, success, error_code, source_screen, platform, app_version,
-          club_id_hash, session_id_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [
-        params.eventName,
-        params.success ?? null,
-        params.errorCode ?? null,
-        params.sourceScreen ?? null,
-        params.platform ?? null,
-        params.appVersion ?? null,
-        params.clubId ? hashId(params.clubId) : null,
-        params.sessionId ? hashId(params.sessionId) : null,
-      ]
+         (event_name, properties)
+       VALUES ($1, $2)`,
+      [params.eventName, properties]
     );
   } catch (err) {
     // Never throw — analytics is best-effort only.
     logger.warn('[analytics] insert failed (ignored)', {
       error: err instanceof Error ? err.message : String(err),
     });
+  }
+}
+
+// ─── Dashboard Stats ──────────────────────────────────────────────────────────
+
+export async function getDashboardStats() {
+  try {
+    const dauRes = await pool.query(
+      `SELECT count(DISTINCT actor_user_id) as count FROM audit_logs WHERE created_at > now() - interval '1 day'`
+    );
+    const wauRes = await pool.query(
+      `SELECT count(DISTINCT actor_user_id) as count FROM audit_logs WHERE created_at > now() - interval '7 days'`
+    );
+    const mauRes = await pool.query(
+      `SELECT count(DISTINCT actor_user_id) as count FROM audit_logs WHERE created_at > now() - interval '30 days'`
+    );
+
+    const eventsRes = await pool.query(
+      `SELECT event_name, count(*) as count FROM analytics_events GROUP BY event_name ORDER BY count DESC LIMIT 10`
+    );
+
+    const screensRes = await pool.query(
+      `SELECT properties->>'source_screen' as screen_name, count(*) as count
+       FROM analytics_events
+       WHERE properties->>'source_screen' IS NOT NULL
+       GROUP BY properties->>'source_screen'
+       ORDER BY count DESC LIMIT 10`
+    );
+
+    return {
+      dau: parseInt(dauRes.rows[0]?.count || '0', 10),
+      wau: parseInt(wauRes.rows[0]?.count || '0', 10),
+      mau: parseInt(mauRes.rows[0]?.count || '0', 10),
+      topEvents: eventsRes.rows.map((r) => ({
+        event_name: r.event_name,
+        count: parseInt(r.count, 10),
+      })),
+      topScreens: screensRes.rows.map((r) => ({
+        screen_name: r.screen_name,
+        count: parseInt(r.count, 10),
+      })),
+    };
+  } catch (err) {
+    logger.error('Failed to get dashboard stats', { error: err instanceof Error ? err.message : String(err) });
+    throw err;
   }
 }
