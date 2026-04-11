@@ -135,7 +135,9 @@ export async function getDashboardStats() {
       })),
     };
   } catch (err) {
-    logger.error('Failed to get dashboard stats', { error: err instanceof Error ? err.message : String(err) });
+    logger.error('Failed to get dashboard stats', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     throw err;
   }
 }

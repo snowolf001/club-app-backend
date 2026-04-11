@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import sessionRoutes from './routes/sessionRoutes';
 import membershipRoutes from './routes/membershipRoutes';
 import attendanceRoutes from './routes/attendanceRoutes';
@@ -12,6 +13,7 @@ import { apiKeyAuth } from './middleware/apiKeyAuth';
 
 const app = express();
 
+app.use(cors()); // Allow local and cross-origin requests
 app.use(express.json());
 app.use(requestLogger);
 
