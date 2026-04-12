@@ -84,17 +84,17 @@ export async function updateClubSettingsHandler(
       );
     }
 
-    // Only admins and owners may update club settings
+    // Only the owner may update club settings
     const actorMemberId = getActorMemberId(req);
     const actorRow = await pool.query<{ role: string; user_id: string }>(
       `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
       [actorMemberId]
     );
-    if (!['admin', 'owner'].includes(actorRow.rows[0]?.role ?? '')) {
+    if (!['owner'].includes(actorRow.rows[0]?.role ?? '')) {
       throw new AppError(
         403,
         'UNAUTHORIZED',
-        'Only admins and owners can update club settings.'
+        'Only the owner can update club settings.'
       );
     }
 
@@ -192,19 +192,15 @@ export async function addClubLocationHandler(
       );
     }
 
-    // Only admin or owner may add locations
+    // Only the owner may add locations
     const actorMemberId = getActorMemberId(req);
     const memberRow = await pool.query<{ role: string; user_id: string }>(
       `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
       [actorMemberId]
     );
     const row = memberRow.rows[0];
-    if (!row || !['admin', 'owner'].includes(row.role)) {
-      throw new AppError(
-        403,
-        'FORBIDDEN',
-        'Only admins or owners can add locations.'
-      );
+    if (!row || !['owner'].includes(row.role)) {
+      throw new AppError(403, 'FORBIDDEN', 'Only the owner can add locations.');
     }
     const { name, address } = req.body as {
       name?: unknown;
@@ -266,11 +262,11 @@ export async function deleteClubLocationHandler(
       [actorMemberId]
     );
     const role = memberRow.rows[0]?.role;
-    if (!role || !['admin', 'owner'].includes(role)) {
+    if (!role || !['owner'].includes(role)) {
       throw new AppError(
         403,
         'FORBIDDEN',
-        'Only owners and admins can delete locations.'
+        'Only the owner can delete locations.'
       );
     }
 

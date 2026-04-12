@@ -358,11 +358,11 @@ export async function regenerateJoinCode(
     [actorMembershipId]
   );
   const actorRow = actorResult.rows[0];
-  if (!actorRow || !['admin', 'owner'].includes(actorRow.role)) {
+  if (!actorRow || !['owner'].includes(actorRow.role)) {
     throw new AppError(
       403,
       'FORBIDDEN',
-      'Only admins can regenerate the join code.'
+      'Only the owner can regenerate the join code.'
     );
   }
 
@@ -428,11 +428,11 @@ export async function transferOwnership(
         'Target membership not found.'
       );
     }
-    if (target.role !== 'admin') {
+    if (target.role !== 'host') {
       throw new AppError(
         400,
         'INVALID_TARGET',
-        'Ownership can only be transferred to an existing admin.'
+        'Ownership can only be transferred to an existing host.'
       );
     }
 
@@ -442,7 +442,7 @@ export async function transferOwnership(
       [target.id]
     );
     await client.query(
-      `UPDATE memberships SET role = 'admin', updated_at = NOW() WHERE id = $1`,
+      `UPDATE memberships SET role = 'host', updated_at = NOW() WHERE id = $1`,
       [actor.id]
     );
 
@@ -487,14 +487,14 @@ export async function leaveClub(membershipId: string): Promise<void> {
   }
 
   if (member.role === 'owner') {
-    // Check if another active admin exists
-    const adminRow = await pool.query<{ count: string }>(
+    // Check if another active host exists
+    const hostRow = await pool.query<{ count: string }>(
       `SELECT COUNT(*) AS count FROM memberships
-       WHERE club_id = $1 AND role = 'admin' AND status = 'active'`,
+       WHERE club_id = $1 AND role = 'host' AND status = 'active'`,
       [member.club_id]
     );
-    const adminCount = parseInt(adminRow.rows[0].count, 10);
-    if (adminCount > 0) {
+    const hostCount = parseInt(hostRow.rows[0].count, 10);
+    if (hostCount > 0) {
       throw new AppError(
         403,
         'OWNER_TRANSFER_REQUIRED',
@@ -504,7 +504,7 @@ export async function leaveClub(membershipId: string): Promise<void> {
       throw new AppError(
         403,
         'OWNER_PROMOTE_AND_TRANSFER_REQUIRED',
-        'Please promote another member to admin first, then transfer ownership before leaving.'
+        'Please promote another member to host first, then transfer ownership before leaving.'
       );
     }
   }
@@ -556,11 +556,11 @@ export async function removeMember(
   );
   const actorRow = actorResult.rows[0];
   const actorRole = actorRow?.role;
-  if (!actorRole || !['admin', 'owner'].includes(actorRole)) {
-    throw new AppError(403, 'FORBIDDEN', 'Only admins can remove members.');
+  if (!actorRole || !['host', 'owner'].includes(actorRole)) {
+    throw new AppError(403, 'FORBIDDEN', 'Only hosts can remove members.');
   }
-  if (target.role === 'admin' && actorRole !== 'owner') {
-    throw new AppError(403, 'FORBIDDEN', 'Only the owner can remove an admin.');
+  if (target.role === 'host' && actorRole !== 'owner') {
+    throw new AppError(403, 'FORBIDDEN', 'Only the owner can remove a host.');
   }
 
   await pool.query(

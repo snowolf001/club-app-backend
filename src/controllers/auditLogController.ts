@@ -34,18 +34,18 @@ export async function getAuditLogsHandler(
       );
     }
 
-    // Host/admin/owner only
+    // Host/owner only
     const actorId = getCurrentUserId(req);
     const memberRow = await pool.query<{ role: string }>(
       `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 LIMIT 1`,
       [actorId, clubId]
     );
     const role = memberRow.rows[0]?.role;
-    if (!role || !['host', 'admin', 'owner'].includes(role)) {
+    if (!role || !['host', 'owner'].includes(role)) {
       throw new AppError(
         403,
         'FORBIDDEN',
-        'Only hosts and admins can view audit logs.'
+        'Only hosts and owners can view audit logs.'
       );
     }
 

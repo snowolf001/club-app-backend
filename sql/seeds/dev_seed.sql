@@ -193,7 +193,7 @@ VALUES
    'b2b2b2b2-b2b2-b2b2-b2b2-b2b2b2b2b2b2',
    -1, 'checkin', 'Credit deducted for session check-in',
    NOW() - INTERVAL '7 days' + INTERVAL '8 minutes'),
-  -- Bob added credits to Carol (admin action)
+  -- Bob added credits to Carol (host action)
   ('e5e5e5e5-e5e5-e5e5-e5e5-e5e5e5e5e5e5',
    '22222222-2222-2222-2222-222222222222',
    '66666666-6666-6666-6666-666666666666',

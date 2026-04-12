@@ -186,17 +186,17 @@ export async function createSessionHandler(
       );
     }
 
-    // Only hosts, admins, and owners may create sessions
+    // Only hosts and owners may create sessions
     const actorMemberId = getActorMemberId(req);
     const actorRow = await pool.query<{ role: string; user_id: string }>(
       `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
       [actorMemberId]
     );
-    if (!['host', 'admin', 'owner'].includes(actorRow.rows[0]?.role ?? '')) {
+    if (!['host', 'owner'].includes(actorRow.rows[0]?.role ?? '')) {
       throw new AppError(
         403,
         'UNAUTHORIZED',
-        'Only hosts, admins, and owners can create sessions.'
+        'Only hosts and owners can create sessions.'
       );
     }
 
@@ -389,11 +389,11 @@ export async function deleteSessionHandler(
       [actorMemberId]
     );
     const role = memberRow.rows[0]?.role;
-    if (!role || !['owner', 'admin', 'host'].includes(role)) {
+    if (!role || !['owner', 'host'].includes(role)) {
       throw new AppError(
         403,
         'FORBIDDEN',
-        'Only owners, admins, and hosts can delete sessions.'
+        'Only owners and hosts can delete sessions.'
       );
     }
 

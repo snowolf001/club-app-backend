@@ -50,7 +50,7 @@ CREATE TABLE memberships (
   club_id           UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
   user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   display_name      TEXT NOT NULL,
-  role              TEXT NOT NULL CHECK (role IN ('member', 'host', 'admin', 'owner')),
+  role              TEXT NOT NULL CHECK (role IN ('member', 'host', 'owner')),
   status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'removed')),
   credits_remaining INTEGER NOT NULL DEFAULT 0 CHECK (credits_remaining >= 0),
   recovery_code     TEXT NOT NULL UNIQUE,

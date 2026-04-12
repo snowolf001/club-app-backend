@@ -21,11 +21,11 @@ async function requireReportAccess(
     [membershipId, clubId]
   );
   const role = result.rows[0]?.role;
-  if (!role || !['host', 'admin', 'owner'].includes(role)) {
+  if (!role || !['host', 'owner'].includes(role)) {
     throw new AppError(
       403,
       'FORBIDDEN',
-      'Reports are only accessible to hosts and admins.'
+      'Reports are only accessible to hosts and owners.'
     );
   }
 }

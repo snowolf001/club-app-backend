@@ -123,18 +123,18 @@ export async function updateMemberRoleHandler(
 
     const { role } = req.body ?? {};
 
-    if (role !== 'member' && role !== 'host' && role !== 'admin') {
+    if (role !== 'member' && role !== 'host') {
       throw new AppError(
         400,
         'INVALID_ROLE',
-        'role must be one of: "member", "host", "admin".'
+        'role must be one of: "member", "host".'
       );
     }
 
     const membership = await updateMemberRole(
       membershipId,
       actorMemberId,
-      role as 'member' | 'host' | 'admin'
+      role as 'member' | 'host'
     );
     res.json({ success: true, data: membership });
   } catch (error) {

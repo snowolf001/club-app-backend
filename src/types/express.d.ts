@@ -5,7 +5,7 @@ declare global {
     interface Request {
       user?: {
         id: string;
-        role?: 'member' | 'host' | 'owner' | 'admin';
+        role?: 'member' | 'host' | 'owner';
       };
       actor?: {
         memberId: string;

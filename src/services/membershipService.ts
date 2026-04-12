@@ -187,16 +187,16 @@ export async function addCredits(
       );
     }
 
-    // Verify actor is admin, owner, or host of the same club
+    // Verify actor is host or owner of the same club
     const actorRow = await client.query<{ role: string; user_id: string }>(
       `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
       [actorMembershipId]
     );
-    if (!['admin', 'owner', 'host'].includes(actorRow.rows[0]?.role ?? '')) {
+    if (!['owner', 'host'].includes(actorRow.rows[0]?.role ?? '')) {
       throw new AppError(
         403,
         'UNAUTHORIZED',
-        'Only admins, owners, and hosts can adjust member credits.'
+        'Only hosts and owners can adjust member credits.'
       );
     }
 
@@ -292,7 +292,7 @@ export async function addCredits(
 export async function updateMemberRole(
   membershipId: string,
   actorMembershipId: string,
-  newRole: 'member' | 'host' | 'admin'
+  newRole: 'member' | 'host'
 ): Promise<MembershipItem> {
   const client = await pool.connect();
 
@@ -332,7 +332,7 @@ export async function updateMemberRole(
       );
     }
 
-    // Verify actor has permission (must be admin or owner in the same club)
+    // Verify actor has permission (must be host or owner in the same club)
     const actorResult = await client.query<{
       role: string;
       id: string;
@@ -343,32 +343,24 @@ export async function updateMemberRole(
     );
 
     const actorRole = actorResult.rows[0]?.role;
-    if (!actorRole || !['admin', 'owner'].includes(actorRole)) {
+    if (!actorRole || !['host', 'owner'].includes(actorRole)) {
       throw new AppError(
         403,
         'FORBIDDEN',
-        'Only admins can change member roles.'
+        'Only hosts can change member roles.'
       );
     }
 
-    // Only owner can promote/demote admin
-    if (newRole === 'admin' && actorRole !== 'owner') {
+    // Only owner can promote/demote host
+    if (newRole === 'host' && actorRole !== 'owner') {
       throw new AppError(
         403,
         'FORBIDDEN',
-        'Only the owner can promote a member to admin.'
+        'Only the owner can promote a member to host.'
       );
     }
-    if (
-      target.role === 'admin' &&
-      newRole !== 'admin' &&
-      actorRole !== 'owner'
-    ) {
-      throw new AppError(
-        403,
-        'FORBIDDEN',
-        'Only the owner can demote an admin.'
-      );
+    if (target.role === 'host' && newRole !== 'host' && actorRole !== 'owner') {
+      throw new AppError(403, 'FORBIDDEN', 'Only the owner can demote a host.');
     }
 
     // Prevent self-change
