@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
 import { isValidUUID } from '../utils/validators';
-import { getCurrentUserId } from '../lib/auth';
+import { getCurrentUserId, getActorMemberId } from '../lib/auth';
 import { pool } from '../db/pool';
 import { getAuditLogs } from '../services/auditLogService';
 
@@ -35,10 +35,10 @@ export async function getAuditLogsHandler(
     }
 
     // Host/owner only
-    const actorId = getCurrentUserId(req);
+    const actorMemberId = getActorMemberId(req);
     const memberRow = await pool.query<{ role: string }>(
-      `SELECT role FROM memberships WHERE user_id = $1 AND club_id = $2 LIMIT 1`,
-      [actorId, clubId]
+      `SELECT role FROM memberships WHERE membership_id = $1 AND club_id = $2 LIMIT 1`,
+      [actorMemberId, clubId]
     );
     const role = memberRow.rows[0]?.role;
     if (!role || !['host', 'owner'].includes(role)) {
