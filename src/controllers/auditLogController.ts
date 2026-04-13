@@ -37,7 +37,7 @@ export async function getAuditLogsHandler(
     // Host/owner only
     const actorMemberId = getActorMemberId(req);
     const memberRow = await pool.query<{ role: string }>(
-      `SELECT role FROM memberships WHERE membership_id = $1 AND club_id = $2 LIMIT 1`,
+      `SELECT role FROM memberships WHERE id = $1 AND club_id = $2 LIMIT 1`,
       [actorMemberId, clubId]
     );
     const role = memberRow.rows[0]?.role;
