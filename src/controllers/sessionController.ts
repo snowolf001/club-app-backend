@@ -5,6 +5,12 @@ import { getCurrentUserId, getActorMemberId } from '../lib/auth';
 import { pool } from '../db/pool';
 import { createAuditLog } from '../services/auditLogService';
 import {
+  normalizeRole,
+  canManageSession,
+  canDeleteSession,
+  canManualCheckIn,
+} from '../lib/permissions';
+import {
   checkInToSession,
   manualCheckInToSession,
 } from '../services/checkinService';
@@ -192,7 +198,7 @@ export async function createSessionHandler(
       `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
       [actorMemberId]
     );
-    if (!['host', 'owner'].includes(actorRow.rows[0]?.role ?? '')) {
+    if (!canManageSession(normalizeRole(actorRow.rows[0]?.role))) {
       throw new AppError(
         403,
         'UNAUTHORIZED',
@@ -291,13 +297,20 @@ export async function postManualCheckIn(
     const sessionId = req.params['sessionId'] as string;
     const actorMemberId = getActorMemberId(req);
 
-    // Resolve actor's user_id for manual check-in audit trail
-    const actorRow = await pool.query<{ user_id: string }>(
-      `SELECT user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+    // Resolve actor's user_id and role for manual check-in
+    const actorRow = await pool.query<{ user_id: string; role: string }>(
+      `SELECT user_id, role FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
       [actorMemberId]
     );
     if (!actorRow.rows[0]) {
       throw new AppError(401, 'UNAUTHORIZED', 'Actor membership not found.');
+    }
+    if (!canManualCheckIn(normalizeRole(actorRow.rows[0].role))) {
+      throw new AppError(
+        403,
+        'FORBIDDEN',
+        'Only hosts and owners can manually check in members.'
+      );
     }
     const actorUserId = actorRow.rows[0].user_id;
 
@@ -388,8 +401,8 @@ export async function deleteSessionHandler(
       `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
       [actorMemberId]
     );
-    const role = memberRow.rows[0]?.role;
-    if (!role || !['owner', 'host'].includes(role)) {
+    const role = normalizeRole(memberRow.rows[0]?.role);
+    if (!canDeleteSession(role)) {
       throw new AppError(
         403,
         'FORBIDDEN',

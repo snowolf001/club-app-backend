@@ -3,14 +3,37 @@ import { AppError } from '../errors/AppError';
 import { isValidUUID } from '../utils/validators';
 import { getActorMemberId } from '../lib/auth';
 import { pool } from '../db/pool';
+import { logger } from '../lib/logger';
+import {
+  normalizeRole,
+  canViewReports,
+  canViewAuditLog,
+  requirePro,
+} from '../lib/permissions';
 import {
   getSessionAttendees,
   getMemberHistory,
   getAttendanceReport,
   getSessionsBreakdown,
+  getReportSummary,
 } from '../services/reportService';
+import { getAuditLogs } from '../services/auditLogService';
 
-// ─── Permission helpers ───────────────────────────────────────────────────────
+// ─── Helper: parse date param — accepts ?from= and ?startDate= aliases ────────
+
+function parseDateParam(
+  query: Record<string, unknown>,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    if (typeof query[key] === 'string' && (query[key] as string).trim()) {
+      return (query[key] as string).trim();
+    }
+  }
+  return undefined;
+}
+
+// ─── Permission guard ─────────────────────────────────────────────────────────
 
 async function requireReportAccess(
   membershipId: string,
@@ -20,8 +43,8 @@ async function requireReportAccess(
     `SELECT role FROM memberships WHERE id = $1 AND club_id = $2 LIMIT 1`,
     [membershipId, clubId]
   );
-  const role = result.rows[0]?.role;
-  if (!role || !['host', 'owner'].includes(role)) {
+  const role = normalizeRole(result.rows[0]?.role);
+  if (!canViewReports(role)) {
     throw new AppError(
       403,
       'FORBIDDEN',
@@ -61,7 +84,12 @@ export async function getSessionAttendeesHandler(
     const actorId = getActorMemberId(req);
     await requireReportAccess(actorId, clubId);
 
+    logger.info('[report] session-attendees request', { sessionId, actorId });
     const data = await getSessionAttendees(sessionId);
+    logger.info('[report] session-attendees result', {
+      sessionId,
+      attendeeCount: data.attendees.length,
+    });
     res.json({ success: true, data });
   } catch (error) {
     next(error);
@@ -99,23 +127,35 @@ export async function getMemberHistoryHandler(
     const actorId = getActorMemberId(req);
     await requireReportAccess(actorId, clubId);
 
-    const startDate =
-      typeof req.query['startDate'] === 'string'
-        ? req.query['startDate']
-        : undefined;
-    const endDate =
-      typeof req.query['endDate'] === 'string'
-        ? req.query['endDate']
-        : undefined;
+    // Accept ?from= / ?to= as aliases for ?startDate= / ?endDate=
+    const startDate = parseDateParam(
+      req.query as Record<string, unknown>,
+      'startDate',
+      'from'
+    );
+    const endDate = parseDateParam(
+      req.query as Record<string, unknown>,
+      'endDate',
+      'to'
+    );
     const rawLimit = parseInt(String(req.query['limit'] ?? '100'), 10);
     const limit =
       isNaN(rawLimit) || rawLimit < 1 ? 100 : Math.min(rawLimit, 500);
 
+    logger.info('[report] member-history request', {
+      membershipId,
+      startDate,
+      endDate,
+    });
     const data = await getMemberHistory({
       membershipId,
       startDate,
       endDate,
       limit,
+    });
+    logger.info('[report] member-history result', {
+      membershipId,
+      itemCount: data.items.length,
     });
     res.json({ success: true, data });
   } catch (error) {
@@ -151,14 +191,17 @@ export async function getAttendanceReportHandler(
     const actorId = getActorMemberId(req);
     await requireReportAccess(actorId, clubId);
 
-    const startDate =
-      typeof req.query['startDate'] === 'string'
-        ? req.query['startDate']
-        : undefined;
-    const endDate =
-      typeof req.query['endDate'] === 'string'
-        ? req.query['endDate']
-        : undefined;
+    // Accept ?from= / ?to= as aliases for ?startDate= / ?endDate=
+    const startDate = parseDateParam(
+      req.query as Record<string, unknown>,
+      'startDate',
+      'from'
+    );
+    const endDate = parseDateParam(
+      req.query as Record<string, unknown>,
+      'endDate',
+      'to'
+    );
 
     const rawSessionIds = req.query['sessionIds'];
     const sessionIds: string[] | undefined =
@@ -187,6 +230,11 @@ export async function getAttendanceReportHandler(
     const limit =
       isNaN(rawLimit) || rawLimit < 1 ? 500 : Math.min(rawLimit, 1000);
 
+    logger.info('[report] attendance-report request', {
+      clubId,
+      startDate,
+      endDate,
+    });
     const data = await getAttendanceReport({
       clubId,
       startDate,
@@ -196,7 +244,11 @@ export async function getAttendanceReportHandler(
       locationId,
       limit,
     });
-
+    logger.info('[report] attendance-report result', {
+      clubId,
+      itemCount: data.items.length,
+      totalSessions: data.summary.totalSessions,
+    });
     res.json({ success: true, data });
   } catch (error) {
     next(error);
@@ -232,22 +284,229 @@ export async function getSessionsBreakdownHandler(
     await requireReportAccess(actorId, clubId);
 
     const lastOnly = req.query['last'] === 'true';
-    const startDate =
-      typeof req.query['startDate'] === 'string'
-        ? req.query['startDate']
-        : undefined;
-    const endDate =
-      typeof req.query['endDate'] === 'string'
-        ? req.query['endDate']
-        : undefined;
+    // Accept ?from= / ?to= as aliases for ?startDate= / ?endDate=
+    const startDate = parseDateParam(
+      req.query as Record<string, unknown>,
+      'startDate',
+      'from'
+    );
+    const endDate = parseDateParam(
+      req.query as Record<string, unknown>,
+      'endDate',
+      'to'
+    );
 
+    logger.info('[report] sessions-breakdown request', {
+      clubId,
+      startDate,
+      endDate,
+      lastOnly,
+    });
     const data = await getSessionsBreakdown({
       clubId,
       startDate,
       endDate,
       lastOnly,
     });
+    logger.info('[report] sessions-breakdown result', {
+      clubId,
+      sessionCount: data.sessions.length,
+    });
     res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── GET /api/reports/summary?clubId=&from=&to= ───────────────────────────────
+
+export async function getReportSummaryHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const clubId = req.query['clubId'];
+    if (typeof clubId !== 'string' || !clubId.trim()) {
+      throw new AppError(
+        400,
+        'MISSING_CLUB_ID',
+        'clubId query parameter is required.'
+      );
+    }
+    if (!isValidUUID(clubId)) {
+      throw new AppError(
+        400,
+        'INVALID_CLUB_ID',
+        'clubId must be a valid UUID.'
+      );
+    }
+
+    const actorId = getActorMemberId(req);
+    await requireReportAccess(actorId, clubId);
+
+    const from = parseDateParam(
+      req.query as Record<string, unknown>,
+      'from',
+      'startDate'
+    );
+    const to = parseDateParam(
+      req.query as Record<string, unknown>,
+      'to',
+      'endDate'
+    );
+
+    logger.info('[report] summary request', { clubId, from, to, actorId });
+    const data = await getReportSummary({ clubId, from, to });
+    logger.info('[report] summary result', {
+      clubId,
+      totalSessions: data.totalSessions,
+      totalCheckIns: data.totalCheckIns,
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── GET /api/reports/session?clubId=&from=&to= ───────────────────────────────
+// Alias for sessions/breakdown — UI-friendly single-session-report endpoint.
+
+export async function getReportSessionHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const clubId = req.query['clubId'];
+    if (typeof clubId !== 'string' || !clubId.trim()) {
+      throw new AppError(
+        400,
+        'MISSING_CLUB_ID',
+        'clubId query parameter is required.'
+      );
+    }
+    if (!isValidUUID(clubId)) {
+      throw new AppError(
+        400,
+        'INVALID_CLUB_ID',
+        'clubId must be a valid UUID.'
+      );
+    }
+
+    const actorId = getActorMemberId(req);
+    await requireReportAccess(actorId, clubId);
+
+    const lastOnly = req.query['last'] === 'true';
+    const from = parseDateParam(
+      req.query as Record<string, unknown>,
+      'from',
+      'startDate'
+    );
+    const to = parseDateParam(
+      req.query as Record<string, unknown>,
+      'to',
+      'endDate'
+    );
+
+    logger.info('[report] session request', {
+      clubId,
+      from,
+      to,
+      lastOnly,
+      actorId,
+    });
+    const data = await getSessionsBreakdown({
+      clubId,
+      startDate: from,
+      endDate: to,
+      lastOnly,
+    });
+    logger.info('[report] session result', {
+      clubId,
+      sessionCount: data.sessions.length,
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── GET /api/reports/audit?clubId=&from=&to= — Pro-only ──────────────────────
+
+export async function getReportAuditHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const clubId = req.query['clubId'];
+    if (typeof clubId !== 'string' || !clubId.trim()) {
+      throw new AppError(
+        400,
+        'MISSING_CLUB_ID',
+        'clubId query parameter is required.'
+      );
+    }
+    if (!isValidUUID(clubId)) {
+      throw new AppError(
+        400,
+        'INVALID_CLUB_ID',
+        'clubId must be a valid UUID.'
+      );
+    }
+
+    const actorId = getActorMemberId(req);
+
+    // Audit log report is Pro-only
+    await requirePro(actorId, clubId, 'audit-report');
+
+    // Additionally verify the caller can view audit logs
+    const memberRow = await pool.query<{ role: string }>(
+      `SELECT role FROM memberships WHERE id = $1 AND club_id = $2 LIMIT 1`,
+      [actorId, clubId]
+    );
+    if (!canViewAuditLog(normalizeRole(memberRow.rows[0]?.role))) {
+      throw new AppError(
+        403,
+        'FORBIDDEN',
+        'Only hosts and owners can view audit logs.'
+      );
+    }
+
+    const from = parseDateParam(
+      req.query as Record<string, unknown>,
+      'from',
+      'startDate'
+    );
+    const to = parseDateParam(
+      req.query as Record<string, unknown>,
+      'to',
+      'endDate'
+    );
+    const rawLimit = parseInt(String(req.query['limit'] ?? '200'), 10);
+    const limit =
+      isNaN(rawLimit) || rawLimit < 1 ? 200 : Math.min(rawLimit, 1000);
+    const rawOffset = parseInt(String(req.query['offset'] ?? '0'), 10);
+    const offset = isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
+
+    logger.info('[report] audit request', { clubId, from, to, actorId });
+    const data = await getAuditLogs(clubId, limit, offset, {
+      startDate: from ?? null,
+      endDate: to ?? null,
+    });
+    logger.info('[report] audit result', { clubId, count: data.length });
+    res.json({
+      success: true,
+      data: {
+        items: data,
+        summary: {
+          totalItems: data.length,
+          from: from ?? null,
+          to: to ?? null,
+        },
+      },
+    });
   } catch (error) {
     next(error);
   }

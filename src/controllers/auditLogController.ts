@@ -4,6 +4,7 @@ import { isValidUUID } from '../utils/validators';
 import { getCurrentUserId, getActorMemberId } from '../lib/auth';
 import { pool } from '../db/pool';
 import { getAuditLogs } from '../services/auditLogService';
+import { normalizeRole, canViewAuditLog } from '../lib/permissions';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -40,8 +41,8 @@ export async function getAuditLogsHandler(
       `SELECT role FROM memberships WHERE id = $1 AND club_id = $2 LIMIT 1`,
       [actorMemberId, clubId]
     );
-    const role = memberRow.rows[0]?.role;
-    if (!role || !['host', 'owner'].includes(role)) {
+    const role = normalizeRole(memberRow.rows[0]?.role);
+    if (!canViewAuditLog(role)) {
       throw new AppError(
         403,
         'FORBIDDEN',

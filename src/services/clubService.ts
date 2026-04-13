@@ -3,6 +3,7 @@ import { AppError } from '../errors/AppError';
 import { randomBytes, randomUUID } from 'crypto';
 import { writeAuditLog, createAuditLog } from './auditLogService';
 import { logger } from '../lib/logger';
+import { normalizeRole, isOwner, isOwnerOrHost } from '../lib/permissions';
 
 function generateJoinCode(): string {
   return randomBytes(4).toString('hex').toUpperCase(); // 8 hex chars
@@ -358,7 +359,7 @@ export async function regenerateJoinCode(
     [actorMembershipId]
   );
   const actorRow = actorResult.rows[0];
-  if (!actorRow || !['owner'].includes(actorRow.role)) {
+  if (!actorRow || !isOwner(normalizeRole(actorRow.role))) {
     throw new AppError(
       403,
       'FORBIDDEN',
@@ -404,7 +405,7 @@ export async function transferOwnership(
       [actorMembershipId]
     );
     const actor = actorResult.rows[0];
-    if (!actor || actor.role !== 'owner') {
+    if (!actor || !isOwner(normalizeRole(actor.role))) {
       throw new AppError(
         403,
         'FORBIDDEN',
@@ -428,7 +429,7 @@ export async function transferOwnership(
         'Target membership not found.'
       );
     }
-    if (target.role !== 'host') {
+    if (normalizeRole(target.role) !== 'host') {
       throw new AppError(
         400,
         'INVALID_TARGET',
@@ -556,10 +557,11 @@ export async function removeMember(
   );
   const actorRow = actorResult.rows[0];
   const actorRole = actorRow?.role;
-  if (!actorRole || !['host', 'owner'].includes(actorRole)) {
+  const normalizedActorRole = normalizeRole(actorRole);
+  if (!isOwnerOrHost(normalizedActorRole)) {
     throw new AppError(403, 'FORBIDDEN', 'Only hosts can remove members.');
   }
-  if (target.role === 'host' && actorRole !== 'owner') {
+  if (normalizeRole(target.role) === 'host' && !isOwner(normalizedActorRole)) {
     throw new AppError(403, 'FORBIDDEN', 'Only the owner can remove a host.');
   }
 

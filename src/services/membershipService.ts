@@ -2,6 +2,12 @@ import { pool } from '../db/pool';
 import { AppError } from '../errors/AppError';
 import { writeAuditLog } from './auditLogService';
 import { logger } from '../lib/logger';
+import {
+  normalizeRole,
+  isOwner,
+  isOwnerOrHost,
+  canAdjustCredits,
+} from '../lib/permissions';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -192,7 +198,7 @@ export async function addCredits(
       `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
       [actorMembershipId]
     );
-    if (!['owner', 'host'].includes(actorRow.rows[0]?.role ?? '')) {
+    if (!canAdjustCredits(normalizeRole(actorRow.rows[0]?.role))) {
       throw new AppError(
         403,
         'UNAUTHORIZED',
@@ -343,7 +349,8 @@ export async function updateMemberRole(
     );
 
     const actorRole = actorResult.rows[0]?.role;
-    if (!actorRole || !['host', 'owner'].includes(actorRole)) {
+    const normalizedActorRole = normalizeRole(actorRole);
+    if (!isOwnerOrHost(normalizedActorRole)) {
       throw new AppError(
         403,
         'FORBIDDEN',
@@ -352,14 +359,18 @@ export async function updateMemberRole(
     }
 
     // Only owner can promote/demote host
-    if (newRole === 'host' && actorRole !== 'owner') {
+    if (newRole === 'host' && !isOwner(normalizedActorRole)) {
       throw new AppError(
         403,
         'FORBIDDEN',
         'Only the owner can promote a member to host.'
       );
     }
-    if (target.role === 'host' && newRole !== 'host' && actorRole !== 'owner') {
+    if (
+      normalizeRole(target.role) === 'host' &&
+      newRole !== 'host' &&
+      !isOwner(normalizedActorRole)
+    ) {
       throw new AppError(403, 'FORBIDDEN', 'Only the owner can demote a host.');
     }
 

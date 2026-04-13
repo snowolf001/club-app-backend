@@ -5,6 +5,11 @@ import { getActorMemberId } from '../lib/auth';
 import { pool } from '../db/pool';
 import { createAuditLog } from '../services/auditLogService';
 import {
+  normalizeRole,
+  canChangeClubSettings,
+  canDeleteLocation,
+} from '../lib/permissions';
+import {
   getClub,
   getClubSettings,
   updateClubSettings,
@@ -90,7 +95,7 @@ export async function updateClubSettingsHandler(
       `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
       [actorMemberId]
     );
-    if (!['owner'].includes(actorRow.rows[0]?.role ?? '')) {
+    if (!canChangeClubSettings(normalizeRole(actorRow.rows[0]?.role))) {
       throw new AppError(
         403,
         'UNAUTHORIZED',
@@ -199,7 +204,7 @@ export async function addClubLocationHandler(
       [actorMemberId]
     );
     const row = memberRow.rows[0];
-    if (!row || !['owner'].includes(row.role)) {
+    if (!row || !canChangeClubSettings(normalizeRole(row.role))) {
       throw new AppError(403, 'FORBIDDEN', 'Only the owner can add locations.');
     }
     const { name, address } = req.body as {
@@ -261,8 +266,8 @@ export async function deleteClubLocationHandler(
       `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
       [actorMemberId]
     );
-    const role = memberRow.rows[0]?.role;
-    if (!role || !['owner'].includes(role)) {
+    const role = normalizeRole(memberRow.rows[0]?.role);
+    if (!canDeleteLocation(role)) {
       throw new AppError(
         403,
         'FORBIDDEN',

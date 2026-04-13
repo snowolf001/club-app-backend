@@ -579,3 +579,69 @@ export async function getSessionsBreakdown(params: {
     },
   };
 }
+
+// ─── Report Summary (GET /reports/summary) ────────────────────────────────────
+
+export type ReportSummaryResult = {
+  totalSessions: number;
+  totalCheckIns: number;
+  totalParticipation: number;
+  uniqueMembers: number;
+  activeMemberCount: number;
+  period: { from: string | null; to: string | null };
+};
+
+export async function getReportSummary(params: {
+  clubId: string;
+  from?: string;
+  to?: string;
+}): Promise<ReportSummaryResult> {
+  const { clubId, from, to } = params;
+
+  const conditions: string[] = ['s.club_id = $1'];
+  const values: unknown[] = [clubId];
+  let paramIdx = 2;
+
+  if (from) {
+    conditions.push(`s.starts_at >= $${paramIdx++}::date`);
+    values.push(from);
+  }
+  if (to) {
+    // inclusive: sessions starting on or before end-of-day `to`
+    conditions.push(`s.starts_at < ($${paramIdx++}::date + interval '1 day')`);
+    values.push(to);
+  }
+
+  const summaryResult = await pool.query<{
+    total_sessions: string;
+    total_check_ins: string;
+    total_participation: string;
+    unique_members: string;
+  }>(
+    `SELECT
+       COUNT(DISTINCT s.id)             AS total_sessions,
+       COUNT(a.id)                      AS total_check_ins,
+       COALESCE(SUM(a.credits_used), 0) AS total_participation,
+       COUNT(DISTINCT a.membership_id)  AS unique_members
+     FROM sessions s
+     LEFT JOIN attendances a ON a.session_id = s.id
+     WHERE ${conditions.join(' AND ')}`,
+    values
+  );
+
+  const activeMemberResult = await pool.query<{ count: string }>(
+    `SELECT COUNT(*) AS count FROM memberships
+     WHERE club_id = $1 AND status = 'active'`,
+    [clubId]
+  );
+
+  const row = summaryResult.rows[0];
+  return {
+    totalSessions: parseInt(row?.total_sessions ?? '0', 10),
+    totalCheckIns: parseInt(row?.total_check_ins ?? '0', 10),
+    totalParticipation: parseInt(row?.total_participation ?? '0', 10),
+    uniqueMembers: parseInt(row?.unique_members ?? '0', 10),
+    activeMemberCount: parseInt(activeMemberResult.rows[0]?.count ?? '0', 10),
+    period: { from: from ?? null, to: to ?? null },
+  };
+}
