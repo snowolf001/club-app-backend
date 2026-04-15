@@ -8,7 +8,7 @@ declare global {
         role?: 'member' | 'host' | 'owner';
       };
       actor?: {
-        memberId: string;
+        memberId?: string;
       };
     }
   }

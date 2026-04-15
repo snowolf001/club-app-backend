@@ -1,0 +1,835 @@
+import { db } from '../db';
+import { AppError } from '../errors/AppError';
+import { getPlanCycleFromProductId, PlanCycle } from '../utils/iapProducts';
+import { IapVerifyResult } from '../lib/iap/types';
+import { verifyApplePurchase } from '../lib/iap/appleVerify';
+import { verifyGooglePurchase } from '../lib/iap/googleVerify';
+import { logger } from '../lib/logger';
+import { recordSystemEvent } from '../lib/systemEvents';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export async function refreshGoogleSubscriptionByPurchaseToken(
+  purchaseToken: string
+): Promise<void> {
+  const rowResult = await db.query(
+    `
+    SELECT id, product_id
+      FROM club_subscriptions
+     WHERE platform = 'android'
+       AND purchase_token = $1
+     ORDER BY updated_at DESC
+     LIMIT 1
+    `,
+    [purchaseToken]
+  );
+
+  if (rowResult.rowCount === 0) {
+    logger.warn('[subscription] refresh skipped, no row found', {
+      purchaseToken,
+    });
+    void recordSystemEvent({
+      category: 'subscription',
+      event_type: 'webhook_no_local_subscription',
+      event_status: 'failure',
+      platform: 'android',
+      purchase_token: purchaseToken,
+      message: 'refresh skipped, no local subscription row found',
+    });
+    return;
+  }
+
+  const row = rowResult.rows[0] as {
+    id: string;
+    product_id: string;
+  };
+
+  const verifyResult = await verifyGooglePurchase({
+    productId: row.product_id,
+    purchaseToken,
+  });
+
+  const status = verifyResult.valid ? 'active' : 'invalid';
+  const startedAt =
+    typeof verifyResult.purchaseDateMs === 'number'
+      ? new Date(verifyResult.purchaseDateMs)
+      : null;
+  const expiresAt =
+    typeof verifyResult.expiresAtMs === 'number'
+      ? new Date(verifyResult.expiresAtMs)
+      : null;
+
+  await db.query(
+    `
+    UPDATE club_subscriptions
+       SET status = $1,
+           order_id = COALESCE($2, order_id),
+           started_at = COALESCE($3, started_at),
+           expires_at = $4,
+           provider_raw = COALESCE($5::jsonb, provider_raw),
+           provider_error = $6,
+           updated_at = NOW()
+     WHERE id = $7
+    `,
+    [
+      status,
+      verifyResult.orderId ?? null,
+      startedAt,
+      expiresAt,
+      verifyResult.raw ? JSON.stringify(verifyResult.raw) : null,
+      verifyResult.errorMessage ?? null,
+      row.id,
+    ]
+  );
+
+  void recordSystemEvent({
+    category: 'subscription',
+    event_type: 'subscription_refreshed',
+    event_status: 'info',
+    platform: 'android',
+    purchase_token: purchaseToken,
+    related_subscription_id: row.id,
+    details: {
+      status,
+      expiresAt,
+    },
+  });
+}
+
+/** Normalised view of a club_subscriptions row returned to callers. */
+export interface SubscriptionRecord {
+  id: string;
+  clubId: string;
+  platform: 'ios' | 'android';
+  plan: PlanCycle;
+  status: 'active' | 'scheduled' | 'expired' | 'canceled';
+  productId: string;
+  purchasedByMembershipId: string;
+  startsAt: Date;
+  endsAt: Date;
+  transactionId: string | null;
+  originalTransactionId: string | null;
+  purchaseToken: string | null;
+  orderId: string | null;
+  createdAt: Date;
+}
+
+export interface ClubProStatus {
+  isPro: boolean;
+  activeSubscription: SubscriptionRecord | null;
+  scheduledSubscription: SubscriptionRecord | null;
+}
+
+export interface VerifyPurchaseInput {
+  clubId: string;
+  /** membership.id of the actor triggering the purchase */
+  actorMemberId: string;
+  platform: 'ios' | 'android';
+  productId: string;
+
+  // iOS
+  receiptData?: string;
+  transactionId?: string;
+  originalTransactionId?: string;
+
+  // Android
+  purchaseToken?: string;
+  orderId?: string;
+
+  // Parsed provider payload to store
+  verificationPayload?: unknown;
+}
+
+export interface VerifyPurchaseResult {
+  subscription: SubscriptionRecord;
+  idempotent: boolean;
+}
+
+type Queryable = {
+  query: (
+    text: string,
+    params?: unknown[]
+  ) => Promise<{
+    rows: Record<string, unknown>[];
+    rowCount: number;
+  }>;
+};
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+export async function assertUserBelongsToClub(
+  memberId: string,
+  clubId: string,
+  client: Queryable = db
+): Promise<void> {
+  const result = await client.query(
+    `SELECT id
+     FROM memberships
+     WHERE id = $1
+       AND club_id = $2
+       AND status = 'active'`,
+    [memberId, clubId]
+  );
+
+  if (result.rowCount === 0) {
+    throw new AppError(403, 'FORBIDDEN', 'Membership not found for this club');
+  }
+}
+
+function addPlanInterval(from: Date, plan: PlanCycle): Date {
+  const d = new Date(from);
+  if (plan === 'monthly') {
+    d.setMonth(d.getMonth() + 1);
+  } else {
+    d.setFullYear(d.getFullYear() + 1);
+  }
+  return d;
+}
+
+function rowToRecord(row: Record<string, unknown>): SubscriptionRecord {
+  return {
+    id: row.id as string,
+    clubId: row.club_id as string,
+    platform: row.platform as 'ios' | 'android',
+    plan: row.plan as PlanCycle,
+    status: row.status as SubscriptionRecord['status'],
+    productId: row.product_id as string,
+    purchasedByMembershipId: row.purchased_by_membership_id as string,
+    startsAt: new Date(row.starts_at as string),
+    endsAt: new Date(row.ends_at as string),
+    transactionId: (row.transaction_id as string | null) ?? null,
+    originalTransactionId:
+      (row.original_transaction_id as string | null) ?? null,
+    purchaseToken: (row.purchase_token as string | null) ?? null,
+    orderId: (row.order_id as string | null) ?? null,
+    createdAt: new Date(row.created_at as string),
+  };
+}
+
+function assertExistingSubscriptionBelongsToClub(
+  row: Record<string, unknown>,
+  clubId: string
+): SubscriptionRecord {
+  const existing = rowToRecord(row);
+
+  if (existing.clubId !== clubId) {
+    throw new AppError(
+      403,
+      'FORBIDDEN',
+      'This purchase is already linked to another club'
+    );
+  }
+
+  return existing;
+}
+
+/**
+ * For this app, entitlement is club-level, not store-account-level.
+ * We therefore derive the club entitlement window from the club plan chain:
+ * - if a club already has active / scheduled time in the future, the new plan is queued
+ * - otherwise it starts immediately
+ *
+ * We intentionally do NOT directly use provider expiresAtMs as the final club
+ * endsAt when creating the row, because store expiry is tied to charge time while
+ * club entitlement may be deferred behind an already-active club subscription.
+ */
+function calculateClubEntitlementWindow(
+  now: Date,
+  plan: PlanCycle,
+  lastEndsAt: Date | null
+): {
+  startsAt: Date;
+  endsAt: Date;
+  status: 'active' | 'scheduled';
+} {
+  let startsAt: Date;
+  let status: 'active' | 'scheduled';
+
+  if (lastEndsAt && lastEndsAt > now) {
+    startsAt = lastEndsAt;
+    status = 'scheduled';
+  } else {
+    startsAt = now;
+    status = 'active';
+  }
+
+  const endsAt = addPlanInterval(startsAt, plan);
+
+  return { startsAt, endsAt, status };
+}
+
+// ─── Queries ──────────────────────────────────────────────────────────────────
+
+export async function getActiveSubscriptionForClub(
+  clubId: string,
+  at: Date = new Date(),
+  client: Queryable = db
+): Promise<SubscriptionRecord | null> {
+  const result = await client.query(
+    `SELECT *
+     FROM club_subscriptions
+     WHERE club_id = $1
+       AND status = 'active'
+       AND starts_at <= $2
+       AND ends_at > $2
+     ORDER BY ends_at DESC
+     LIMIT 1`,
+    [clubId, at]
+  );
+
+  return result.rows[0] ? rowToRecord(result.rows[0]) : null;
+}
+
+export async function getScheduledSubscriptionForClub(
+  clubId: string,
+  client: Queryable = db
+): Promise<SubscriptionRecord | null> {
+  const result = await client.query(
+    `SELECT *
+     FROM club_subscriptions
+     WHERE club_id = $1
+       AND status = 'scheduled'
+     ORDER BY starts_at ASC
+     LIMIT 1`,
+    [clubId]
+  );
+
+  return result.rows[0] ? rowToRecord(result.rows[0]) : null;
+}
+
+// ─── Refresh / expiry sweep ───────────────────────────────────────────────────
+
+export async function refreshClubSubscriptionStatuses(
+  clubId: string,
+  client: Queryable = db
+): Promise<void> {
+  const now = new Date();
+
+  // Lock the club row so refresh + scheduling is serialized per club.
+  await client.query(
+    `SELECT id
+     FROM clubs
+     WHERE id = $1
+     FOR UPDATE`,
+    [clubId]
+  );
+
+  // 1) Expire active subscriptions whose entitlement has ended
+  await client.query(
+    `UPDATE club_subscriptions
+     SET status = 'expired',
+         updated_at = NOW()
+     WHERE club_id = $1
+       AND status = 'active'
+       AND ends_at <= $2`,
+    [clubId, now]
+  );
+
+  // 2) If a valid active subscription still exists, keep club as Pro
+  const active = await client.query(
+    `SELECT id, ends_at
+     FROM club_subscriptions
+     WHERE club_id = $1
+       AND status = 'active'
+       AND starts_at <= $2
+       AND ends_at > $2
+     ORDER BY ends_at DESC
+     LIMIT 1`,
+    [clubId, now]
+  );
+
+  if (active.rows[0]) {
+    await client.query(
+      `UPDATE clubs
+       SET pro_status = 'pro',
+           pro_expires_at = $1,
+           pro_updated_at = NOW()
+       WHERE id = $2`,
+      [active.rows[0].ends_at, clubId]
+    );
+    return;
+  }
+
+  // 3) Activate the earliest scheduled subscription that should begin now
+  const next = await client.query(
+    `SELECT id, ends_at
+     FROM club_subscriptions
+     WHERE club_id = $1
+       AND status = 'scheduled'
+       AND starts_at <= $2
+     ORDER BY starts_at ASC
+     LIMIT 1`,
+    [clubId, now]
+  );
+
+  if (next.rows[0]) {
+    await client.query(
+      `UPDATE club_subscriptions
+       SET status = 'active',
+           updated_at = NOW()
+       WHERE id = $1`,
+      [next.rows[0].id]
+    );
+
+    await client.query(
+      `UPDATE clubs
+       SET pro_status = 'pro',
+           pro_expires_at = $1,
+           pro_updated_at = NOW()
+       WHERE id = $2`,
+      [next.rows[0].ends_at, clubId]
+    );
+
+    void recordSystemEvent({
+      category: 'subscription',
+      event_type: 'subscription_updated',
+      event_status: 'info',
+      club_id: clubId,
+      related_subscription_id: next.rows[0].id as string,
+      message: 'scheduled subscription activated',
+    });
+
+    return;
+  }
+
+  // 4) No active and nothing scheduled to start — club is free
+  await client.query(
+    `UPDATE clubs
+     SET pro_status = 'free',
+         pro_expires_at = NULL,
+         pro_updated_at = NOW()
+     WHERE id = $1`,
+    [clubId]
+  );
+}
+
+// ─── Pro status ───────────────────────────────────────────────────────────────
+
+export async function getClubProStatus(clubId: string): Promise<ClubProStatus> {
+  await refreshClubSubscriptionStatuses(clubId);
+
+  const activeSubscription = await getActiveSubscriptionForClub(clubId);
+  const scheduledSubscription = await getScheduledSubscriptionForClub(clubId);
+
+  return {
+    isPro: activeSubscription !== null,
+    activeSubscription,
+    scheduledSubscription,
+  };
+}
+
+// ─── Core purchase handler ────────────────────────────────────────────────────
+
+export async function createOrScheduleSubscriptionForClub(
+  input: VerifyPurchaseInput
+): Promise<VerifyPurchaseResult> {
+  const {
+    clubId,
+    actorMemberId,
+    platform,
+    productId,
+    receiptData,
+    transactionId,
+    originalTransactionId,
+    purchaseToken,
+    orderId,
+    verificationPayload,
+  } = input;
+
+  const plan = getPlanCycleFromProductId(productId);
+  if (!plan) {
+    throw new AppError(
+      400,
+      'INVALID_INPUT',
+      `Unknown product ID: ${productId}`
+    );
+  }
+
+  // 1) Actor must belong to the club
+  await assertUserBelongsToClub(actorMemberId, clubId);
+
+  // 2) Fast-path idempotency checks before provider call
+  if (transactionId) {
+    const r = await db.query(
+      `SELECT *
+       FROM club_subscriptions
+       WHERE transaction_id = $1
+       LIMIT 1`,
+      [transactionId]
+    );
+
+    if (r.rows[0]) {
+      const existing = assertExistingSubscriptionBelongsToClub(
+        r.rows[0],
+        clubId
+      );
+      return { subscription: existing, idempotent: true };
+    }
+  }
+
+  if (originalTransactionId && !transactionId) {
+    const r = await db.query(
+      `SELECT *
+       FROM club_subscriptions
+       WHERE original_transaction_id = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [originalTransactionId]
+    );
+
+    if (r.rows[0]) {
+      const existing = assertExistingSubscriptionBelongsToClub(
+        r.rows[0],
+        clubId
+      );
+      return { subscription: existing, idempotent: true };
+    }
+  }
+
+  if (purchaseToken) {
+    const r = await db.query(
+      `SELECT *
+       FROM club_subscriptions
+       WHERE purchase_token = $1
+       LIMIT 1`,
+      [purchaseToken]
+    );
+
+    if (r.rows[0]) {
+      const existing = assertExistingSubscriptionBelongsToClub(
+        r.rows[0],
+        clubId
+      );
+      return { subscription: existing, idempotent: true };
+    }
+  }
+
+  // 3) Verify with provider
+  let verifyResult: IapVerifyResult;
+
+  if (platform === 'ios') {
+    if (!receiptData) {
+      throw new AppError(
+        400,
+        'INVALID_INPUT',
+        'receiptData is required for iOS'
+      );
+    }
+
+    verifyResult = await verifyApplePurchase({
+      productId,
+      receiptData,
+      transactionId,
+      originalTransactionId,
+    });
+  } else {
+    if (!purchaseToken) {
+      throw new AppError(
+        400,
+        'INVALID_INPUT',
+        'purchaseToken is required for Android'
+      );
+    }
+
+    verifyResult = await verifyGooglePurchase({
+      productId,
+      purchaseToken,
+      orderId,
+    });
+  }
+
+  if (!verifyResult.valid) {
+    void recordSystemEvent({
+      category: 'subscription',
+      event_type: 'verify_failed',
+      event_status: 'failure',
+      club_id: clubId,
+      membership_id: actorMemberId,
+      platform,
+      product_id: productId,
+      purchase_token: purchaseToken ?? null,
+      transaction_id: transactionId ?? null,
+      original_transaction_id: originalTransactionId ?? null,
+      order_id: orderId ?? null,
+      message: verifyResult.errorMessage ?? 'verify returned invalid',
+      details: {
+        valid: false,
+        reason: 'VERIFY_RESULT_INVALID',
+        providerState:
+          verifyResult.raw &&
+          typeof verifyResult.raw === 'object' &&
+          'subscriptionState' in verifyResult.raw
+            ? (verifyResult.raw as { subscriptionState?: unknown })
+                .subscriptionState
+            : null,
+      },
+    });
+
+    throw new AppError(
+      402,
+      'PAYMENT_REQUIRED',
+      verifyResult.errorMessage ?? 'IAP verification failed'
+    );
+  }
+
+  // Provider-returned ids are more trustworthy than client-provided ids
+  const finalTransactionId =
+    verifyResult.transactionId ?? transactionId ?? null;
+  const finalOriginalTransactionId =
+    verifyResult.originalTransactionId ?? originalTransactionId ?? null;
+  const finalPurchaseToken =
+    verifyResult.purchaseToken ?? purchaseToken ?? null;
+  const finalOrderId = verifyResult.orderId ?? orderId ?? null;
+
+  const client = await db.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Re-check membership inside txn
+    await assertUserBelongsToClub(actorMemberId, clubId, client);
+
+    // Serialize operations per club to avoid overlapping entitlement windows.
+    await client.query(
+      `SELECT id
+       FROM clubs
+       WHERE id = $1
+       FOR UPDATE`,
+      [clubId]
+    );
+
+    // 4) Cross-club / idempotency checks inside txn using verified ids
+    if (finalTransactionId) {
+      const r = await client.query(
+        `SELECT *
+         FROM club_subscriptions
+         WHERE transaction_id = $1
+         LIMIT 1`,
+        [finalTransactionId]
+      );
+
+      if (r.rows[0]) {
+        const existing = assertExistingSubscriptionBelongsToClub(
+          r.rows[0],
+          clubId
+        );
+        await client.query('COMMIT');
+        return { subscription: existing, idempotent: true };
+      }
+    }
+
+    if (finalOriginalTransactionId && !finalTransactionId) {
+      const r = await client.query(
+        `SELECT *
+         FROM club_subscriptions
+         WHERE original_transaction_id = $1
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [finalOriginalTransactionId]
+      );
+
+      if (r.rows[0]) {
+        const existing = assertExistingSubscriptionBelongsToClub(
+          r.rows[0],
+          clubId
+        );
+        await client.query('COMMIT');
+        return { subscription: existing, idempotent: true };
+      }
+    }
+
+    if (finalPurchaseToken) {
+      const r = await client.query(
+        `SELECT *
+         FROM club_subscriptions
+         WHERE purchase_token = $1
+         LIMIT 1`,
+        [finalPurchaseToken]
+      );
+
+      if (r.rows[0]) {
+        const existing = assertExistingSubscriptionBelongsToClub(
+          r.rows[0],
+          clubId
+        );
+        await client.query('COMMIT');
+        return { subscription: existing, idempotent: true };
+      }
+    }
+
+    // 5) Refresh current statuses inside the same txn
+    await refreshClubSubscriptionStatuses(clubId, client);
+
+    const now = new Date();
+
+    const last = await client.query(
+      `SELECT ends_at
+       FROM club_subscriptions
+       WHERE club_id = $1
+         AND status IN ('active', 'scheduled')
+         AND ends_at > $2
+       ORDER BY ends_at DESC
+       LIMIT 1`,
+      [clubId, now]
+    );
+
+    const lastEndsAt: Date | null = last.rows[0]?.ends_at
+      ? new Date(last.rows[0].ends_at as string)
+      : null;
+
+    const { startsAt, endsAt, status } = calculateClubEntitlementWindow(
+      now,
+      plan,
+      lastEndsAt
+    );
+
+    // 6) Insert subscription
+    const insert = await client.query(
+      `INSERT INTO club_subscriptions
+         (club_id,
+          platform,
+          plan,
+          status,
+          product_id,
+          purchased_by_membership_id,
+          starts_at,
+          ends_at,
+          transaction_id,
+          original_transaction_id,
+          receipt_data,
+          purchase_token,
+          order_id,
+          verification_payload)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       RETURNING *`,
+      [
+        clubId,
+        platform,
+        plan,
+        status,
+        productId,
+        actorMemberId,
+        startsAt,
+        endsAt,
+        finalTransactionId,
+        finalOriginalTransactionId,
+        platform === 'ios' ? (receiptData ?? null) : null,
+        finalPurchaseToken,
+        finalOrderId,
+        verificationPayload ?? null,
+      ]
+    );
+
+    const subscription = rowToRecord(insert.rows[0]);
+
+    // 7) Update clubs Pro cache
+    if (status === 'active') {
+      await client.query(
+        `UPDATE clubs
+         SET pro_status = 'pro',
+             pro_expires_at = CASE
+               WHEN pro_expires_at IS NULL THEN $1
+               ELSE GREATEST(pro_expires_at, $1)
+             END,
+             pro_updated_at = NOW()
+         WHERE id = $2`,
+        [endsAt, clubId]
+      );
+    } else {
+      // Scheduled purchase should not shorten current cache.
+      await client.query(
+        `UPDATE clubs
+         SET pro_updated_at = NOW()
+         WHERE id = $1`,
+        [clubId]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    void recordSystemEvent({
+      category: 'subscription',
+      event_type:
+        status === 'active' ? 'subscription_created' : 'subscription_scheduled',
+      event_status: 'success',
+      club_id: clubId,
+      membership_id: actorMemberId,
+      platform,
+      plan,
+      product_id: productId,
+      purchase_token: finalPurchaseToken,
+      transaction_id: finalTransactionId,
+      original_transaction_id: finalOriginalTransactionId,
+      order_id: finalOrderId,
+      related_subscription_id: subscription.id,
+      details: { status, idempotent: false },
+    });
+
+    return {
+      subscription,
+      idempotent: false,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    // Graceful fallback for races on unique constraints
+    if (finalTransactionId) {
+      const r = await db.query(
+        `SELECT *
+         FROM club_subscriptions
+         WHERE transaction_id = $1
+         LIMIT 1`,
+        [finalTransactionId]
+      );
+
+      if (r.rows[0]) {
+        const existing = assertExistingSubscriptionBelongsToClub(
+          r.rows[0],
+          clubId
+        );
+        return { subscription: existing, idempotent: true };
+      }
+    }
+
+    if (finalPurchaseToken) {
+      const r = await db.query(
+        `SELECT *
+         FROM club_subscriptions
+         WHERE purchase_token = $1
+         LIMIT 1`,
+        [finalPurchaseToken]
+      );
+
+      if (r.rows[0]) {
+        const existing = assertExistingSubscriptionBelongsToClub(
+          r.rows[0],
+          clubId
+        );
+        return { subscription: existing, idempotent: true };
+      }
+    }
+
+    if (finalOriginalTransactionId && !finalTransactionId) {
+      const r = await db.query(
+        `SELECT *
+         FROM club_subscriptions
+         WHERE original_transaction_id = $1
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [finalOriginalTransactionId]
+      );
+
+      if (r.rows[0]) {
+        const existing = assertExistingSubscriptionBelongsToClub(
+          r.rows[0],
+          clubId
+        );
+        return { subscription: existing, idempotent: true };
+      }
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}

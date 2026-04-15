@@ -3,6 +3,9 @@ import { databaseUrl } from '../config/env';
 
 export const db = new Pool({
   connectionString: databaseUrl,
+  ssl: {
+    rejectUnauthorized: false,
+  },
 });
 
 export async function testDbConnection(): Promise<void> {

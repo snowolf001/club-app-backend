@@ -33,6 +33,13 @@ export function apiKeyAuth(
       });
       return;
     }
+
+    // Dev mode: allow but still attach actor if provided
+    const devMemberId = req.header('x-member-id');
+    if (devMemberId) {
+      req.actor = { memberId: devMemberId };
+    }
+
     next();
     return;
   }
@@ -45,6 +52,22 @@ export function apiKeyAuth(
     });
     return;
   }
+
+  const memberId = req.header('x-member-id');
+
+  if (!memberId) {
+    res.status(401).json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Unauthorized: missing x-member-id',
+        details: null,
+      },
+    });
+    return;
+  }
+
+  req.actor = { memberId };
 
   next();
 }

@@ -117,14 +117,18 @@ export function requireOwner(
 /**
  * Pro feature gate.
  *
- * Currently: any active host/owner in the club passes.
- * Future: also check club plan column here without touching call sites.
+ * Checks two things in order:
+ *   1. Actor is an active owner or host of the club (role check).
+ *   2. Club actually has Pro status (subscription check).
+ *
+ * Both must pass. This is the single enforcement point for all Pro-gated APIs.
  */
 export async function requirePro(
   membershipId: string,
   clubId: string,
   feature: string
 ): Promise<void> {
+  // ── 1. Role check ──────────────────────────────────────────────────────────
   const result = await pool.query<{ role: string }>(
     `SELECT role FROM memberships
      WHERE id = $1 AND club_id = $2 AND status = 'active'
@@ -136,10 +140,19 @@ export async function requirePro(
     throw new AppError(
       403,
       'PRO_REQUIRED',
-      `The '${feature}' feature requires Pro plan access.`
+      `The '${feature}' feature requires a host or owner role.`
     );
   }
-  // TODO: when plan column is added to clubs table, also check:
-  // SELECT plan FROM clubs WHERE id = clubId
-  // and throw PRO_REQUIRED if plan !== 'pro'
+
+  // ── 2. Club Pro status check ───────────────────────────────────────────────
+  // Import lazily to avoid circular dependency at module load time.
+  const { getClubProStatus } = await import('../services/subscriptionService');
+  const proStatus = await getClubProStatus(clubId);
+  if (!proStatus.isPro) {
+    throw new AppError(
+      403,
+      'PRO_REQUIRED',
+      `The '${feature}' feature requires an active Pro subscription.`
+    );
+  }
 }
