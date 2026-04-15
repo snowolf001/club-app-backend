@@ -55,19 +55,9 @@ export function apiKeyAuth(
 
   const memberId = req.header('x-member-id');
 
-  if (!memberId) {
-    res.status(401).json({
-      success: false,
-      error: {
-        code: 'UNAUTHORIZED',
-        message: 'Unauthorized: missing x-member-id',
-        details: null,
-      },
-    });
-    return;
+  if (memberId) {
+    req.actor = { memberId };
   }
-
-  req.actor = { memberId };
 
   next();
 }
