@@ -802,7 +802,7 @@ export async function createOrScheduleSubscriptionForClub(
   } catch (error) {
     await client.query('ROLLBACK');
 
-    if (__DEV__) {
+    if (process.env.NODE_ENV !== 'production') {
       logger.error(
         '[subscription] createOrScheduleSubscriptionForClub failed',
         {
