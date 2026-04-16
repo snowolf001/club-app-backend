@@ -1,8 +1,8 @@
 -- Migration: 005_system_events
 -- Description: Durable structured event log for IAP, subscription lifecycle,
---              and webhook observability.  Never used for business decisions.
+--              and webhook observability. Never used for business decisions.
 
-CREATE TABLE system_events (
+CREATE TABLE IF NOT EXISTS system_events (
   id                        UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
 
   -- What happened
@@ -33,11 +33,30 @@ CREATE TABLE system_events (
   created_at                TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_se_created_at      ON system_events (created_at DESC);
-CREATE INDEX idx_se_category        ON system_events (category);
-CREATE INDEX idx_se_event_type      ON system_events (event_type);
-CREATE INDEX idx_se_event_status    ON system_events (event_status);
-CREATE INDEX idx_se_club_id         ON system_events (club_id)         WHERE club_id IS NOT NULL;
-CREATE INDEX idx_se_membership_id   ON system_events (membership_id)   WHERE membership_id IS NOT NULL;
-CREATE INDEX idx_se_product_id      ON system_events (product_id)      WHERE product_id IS NOT NULL;
-CREATE INDEX idx_se_purchase_token  ON system_events (purchase_token)  WHERE purchase_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_se_created_at
+  ON system_events (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_se_category
+  ON system_events (category);
+
+CREATE INDEX IF NOT EXISTS idx_se_event_type
+  ON system_events (event_type);
+
+CREATE INDEX IF NOT EXISTS idx_se_event_status
+  ON system_events (event_status);
+
+CREATE INDEX IF NOT EXISTS idx_se_club_id
+  ON system_events (club_id)
+  WHERE club_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_se_membership_id
+  ON system_events (membership_id)
+  WHERE membership_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_se_product_id
+  ON system_events (product_id)
+  WHERE product_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_se_purchase_token
+  ON system_events (purchase_token)
+  WHERE purchase_token IS NOT NULL;

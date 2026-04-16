@@ -5,7 +5,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- ============================================================
 -- USERS
 -- ============================================================
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name       TEXT NOT NULL,
   email      TEXT,
@@ -16,7 +16,7 @@ CREATE TABLE users (
 -- ============================================================
 -- CLUBS
 -- ============================================================
-CREATE TABLE clubs (
+CREATE TABLE IF NOT EXISTS clubs (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name                  TEXT NOT NULL,
   join_code             TEXT UNIQUE,
@@ -30,7 +30,7 @@ CREATE TABLE clubs (
 -- ============================================================
 -- CLUB LOCATIONS
 -- ============================================================
-CREATE TABLE club_locations (
+CREATE TABLE IF NOT EXISTS club_locations (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   club_id    UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
   name       TEXT NOT NULL,
@@ -40,12 +40,12 @@ CREATE TABLE club_locations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_club_locations_club ON club_locations (club_id);
+CREATE INDEX IF NOT EXISTS idx_club_locations_club ON club_locations (club_id);
 
 -- ============================================================
 -- MEMBERSHIPS
 -- ============================================================
-CREATE TABLE memberships (
+CREATE TABLE IF NOT EXISTS memberships (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   club_id           UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
   user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -58,15 +58,22 @@ CREATE TABLE memberships (
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX uq_memberships_club_user ON memberships (club_id, user_id);
-CREATE UNIQUE INDEX uq_memberships_display_name ON memberships (club_id, lower(display_name));
-CREATE INDEX idx_memberships_user ON memberships (user_id);
-CREATE INDEX idx_memberships_club ON memberships (club_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_memberships_club_user
+  ON memberships (club_id, user_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_memberships_display_name
+  ON memberships (club_id, lower(display_name));
+
+CREATE INDEX IF NOT EXISTS idx_memberships_user
+  ON memberships (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_memberships_club
+  ON memberships (club_id);
 
 -- ============================================================
 -- SESSIONS
 -- ============================================================
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   club_id     UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
   location_id UUID REFERENCES club_locations(id) ON DELETE SET NULL,
@@ -79,13 +86,13 @@ CREATE TABLE sessions (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_sessions_club ON sessions (club_id);
-CREATE INDEX idx_sessions_starts_at ON sessions (starts_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_club ON sessions (club_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_starts_at ON sessions (starts_at);
 
 -- ============================================================
 -- ATTENDANCES
 -- ============================================================
-CREATE TABLE attendances (
+CREATE TABLE IF NOT EXISTS attendances (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id            UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   club_id               UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
@@ -100,15 +107,22 @@ CREATE TABLE attendances (
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX uq_attendances_session_user ON attendances (session_id, user_id);
-CREATE INDEX idx_attendances_user ON attendances (user_id);
-CREATE INDEX idx_attendances_session ON attendances (session_id);
-CREATE INDEX idx_attendances_membership ON attendances (membership_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_attendances_session_user
+  ON attendances (session_id, user_id);
+
+CREATE INDEX IF NOT EXISTS idx_attendances_user
+  ON attendances (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_attendances_session
+  ON attendances (session_id);
+
+CREATE INDEX IF NOT EXISTS idx_attendances_membership
+  ON attendances (membership_id);
 
 -- ============================================================
 -- CREDIT TRANSACTIONS
 -- ============================================================
-CREATE TABLE credit_transactions (
+CREATE TABLE IF NOT EXISTS credit_transactions (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   club_id          UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
   membership_id    UUID NOT NULL REFERENCES memberships(id) ON DELETE CASCADE,
@@ -122,15 +136,22 @@ CREATE TABLE credit_transactions (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_credit_transactions_membership ON credit_transactions (membership_id);
-CREATE INDEX idx_credit_transactions_session ON credit_transactions (session_id);
-CREATE INDEX idx_credit_transactions_user ON credit_transactions (user_id);
-CREATE INDEX idx_credit_transactions_actor ON credit_transactions (actor_user_id);
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_membership
+  ON credit_transactions (membership_id);
+
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_session
+  ON credit_transactions (session_id);
+
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_user
+  ON credit_transactions (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_actor
+  ON credit_transactions (actor_user_id);
 
 -- ============================================================
 -- AUDIT LOGS
 -- ============================================================
-CREATE TABLE audit_logs (
+CREATE TABLE IF NOT EXISTS audit_logs (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   club_id        UUID REFERENCES clubs(id) ON DELETE CASCADE,
   actor_user_id  UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -143,14 +164,19 @@ CREATE TABLE audit_logs (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_audit_logs_club_id_created_at ON audit_logs (club_id, created_at DESC);
-CREATE INDEX idx_audit_logs_action ON audit_logs (action);
-CREATE INDEX idx_audit_logs_session_id ON audit_logs (session_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_club_id_created_at
+  ON audit_logs (club_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action
+  ON audit_logs (action);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_session_id
+  ON audit_logs (session_id);
 
 -- ============================================================
 -- ANALYTICS EVENTS
 -- ============================================================
-CREATE TABLE analytics_events (
+CREATE TABLE IF NOT EXISTS analytics_events (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   club_id        UUID REFERENCES clubs(id) ON DELETE CASCADE,
   user_id        UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -159,4 +185,5 @@ CREATE TABLE analytics_events (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_analytics_events_club_id ON analytics_events (club_id);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_club_id
+  ON analytics_events (club_id);

@@ -145,14 +145,19 @@ export interface VerifyPurchaseResult {
   idempotent: boolean;
 }
 
+type QueryResultRow = Record<string, unknown>;
+
+type QueryResult = {
+  rows: QueryResultRow[];
+  rowCount: number;
+};
+
 type Queryable = {
-  query: (
-    text: string,
-    params?: unknown[]
-  ) => Promise<{
-    rows: Record<string, unknown>[];
-    rowCount: number;
-  }>;
+  query: (text: string, params?: unknown[]) => Promise<QueryResult>;
+};
+
+type TransactionalClient = Queryable & {
+  release: () => void;
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -223,6 +228,15 @@ function assertExistingSubscriptionBelongsToClub(
   return existing;
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+
+  return code === '23505';
+}
+
 /**
  * For this app, entitlement is club-level, not store-account-level.
  * We therefore derive the club entitlement window from the club plan chain:
@@ -256,6 +270,87 @@ function calculateClubEntitlementWindow(
   const endsAt = addPlanInterval(startsAt, plan);
 
   return { startsAt, endsAt, status };
+}
+
+async function findExistingSubscriptionByVerifiedIds(
+  clubId: string,
+  ids: {
+    transactionId?: string | null;
+    originalTransactionId?: string | null;
+    purchaseToken?: string | null;
+  },
+  client: Queryable = db
+): Promise<SubscriptionRecord | null> {
+  const { transactionId, originalTransactionId, purchaseToken } = ids;
+
+  if (transactionId) {
+    const r = await client.query(
+      `SELECT *
+         FROM club_subscriptions
+        WHERE transaction_id = $1
+        LIMIT 1`,
+      [transactionId]
+    );
+
+    if (r.rows[0]) {
+      return assertExistingSubscriptionBelongsToClub(r.rows[0], clubId);
+    }
+  }
+
+  if (originalTransactionId && !transactionId) {
+    const r = await client.query(
+      `SELECT *
+         FROM club_subscriptions
+        WHERE original_transaction_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [originalTransactionId]
+    );
+
+    if (r.rows[0]) {
+      return assertExistingSubscriptionBelongsToClub(r.rows[0], clubId);
+    }
+  }
+
+  if (purchaseToken) {
+    const r = await client.query(
+      `SELECT *
+         FROM club_subscriptions
+        WHERE purchase_token = $1
+        LIMIT 1`,
+      [purchaseToken]
+    );
+
+    if (r.rows[0]) {
+      return assertExistingSubscriptionBelongsToClub(r.rows[0], clubId);
+    }
+  }
+
+  return null;
+}
+
+async function withDbTransaction<T>(
+  fn: (client: TransactionalClient) => Promise<T>
+): Promise<T> {
+  const client = (await db.connect()) as TransactionalClient;
+
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      logger.error('[subscription] rollback failed', {
+        error: rollbackError,
+      });
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
@@ -299,9 +394,9 @@ export async function getScheduledSubscriptionForClub(
 
 // ─── Refresh / expiry sweep ───────────────────────────────────────────────────
 
-export async function refreshClubSubscriptionStatuses(
+async function refreshClubSubscriptionStatusesInTxn(
   clubId: string,
-  client: Queryable = db
+  client: Queryable
 ): Promise<void> {
   const now = new Date();
 
@@ -403,19 +498,42 @@ export async function refreshClubSubscriptionStatuses(
   );
 }
 
+export async function refreshClubSubscriptionStatuses(
+  clubId: string,
+  client?: Queryable
+): Promise<void> {
+  if (client) {
+    await refreshClubSubscriptionStatusesInTxn(clubId, client);
+    return;
+  }
+
+  await withDbTransaction(async (tx) => {
+    await refreshClubSubscriptionStatusesInTxn(clubId, tx);
+  });
+}
+
 // ─── Pro status ───────────────────────────────────────────────────────────────
 
 export async function getClubProStatus(clubId: string): Promise<ClubProStatus> {
-  await refreshClubSubscriptionStatuses(clubId);
+  return withDbTransaction(async (client) => {
+    await refreshClubSubscriptionStatusesInTxn(clubId, client);
 
-  const activeSubscription = await getActiveSubscriptionForClub(clubId);
-  const scheduledSubscription = await getScheduledSubscriptionForClub(clubId);
+    const activeSubscription = await getActiveSubscriptionForClub(
+      clubId,
+      new Date(),
+      client
+    );
+    const scheduledSubscription = await getScheduledSubscriptionForClub(
+      clubId,
+      client
+    );
 
-  return {
-    isPro: activeSubscription !== null,
-    activeSubscription,
-    scheduledSubscription,
-  };
+    return {
+      isPro: activeSubscription !== null,
+      activeSubscription,
+      scheduledSubscription,
+    };
+  });
 }
 
 // ─── Core purchase handler ────────────────────────────────────────────────────
@@ -449,59 +567,14 @@ export async function createOrScheduleSubscriptionForClub(
   await assertUserBelongsToClub(actorMemberId, clubId);
 
   // 2) Fast-path idempotency checks before provider call
-  if (transactionId) {
-    const r = await db.query(
-      `SELECT *
-       FROM club_subscriptions
-       WHERE transaction_id = $1
-       LIMIT 1`,
-      [transactionId]
-    );
+  const fastExisting = await findExistingSubscriptionByVerifiedIds(clubId, {
+    transactionId,
+    originalTransactionId,
+    purchaseToken,
+  });
 
-    if (r.rows[0]) {
-      const existing = assertExistingSubscriptionBelongsToClub(
-        r.rows[0],
-        clubId
-      );
-      return { subscription: existing, idempotent: true };
-    }
-  }
-
-  if (originalTransactionId && !transactionId) {
-    const r = await db.query(
-      `SELECT *
-       FROM club_subscriptions
-       WHERE original_transaction_id = $1
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [originalTransactionId]
-    );
-
-    if (r.rows[0]) {
-      const existing = assertExistingSubscriptionBelongsToClub(
-        r.rows[0],
-        clubId
-      );
-      return { subscription: existing, idempotent: true };
-    }
-  }
-
-  if (purchaseToken) {
-    const r = await db.query(
-      `SELECT *
-       FROM club_subscriptions
-       WHERE purchase_token = $1
-       LIMIT 1`,
-      [purchaseToken]
-    );
-
-    if (r.rows[0]) {
-      const existing = assertExistingSubscriptionBelongsToClub(
-        r.rows[0],
-        clubId
-      );
-      return { subscription: existing, idempotent: true };
-    }
+  if (fastExisting) {
+    return { subscription: fastExisting, idempotent: true };
   }
 
   // 3) Verify with provider
@@ -581,7 +654,7 @@ export async function createOrScheduleSubscriptionForClub(
     verifyResult.purchaseToken ?? purchaseToken ?? null;
   const finalOrderId = verifyResult.orderId ?? orderId ?? null;
 
-  const client = await db.connect();
+  const client = (await db.connect()) as TransactionalClient;
 
   try {
     await client.query('BEGIN');
@@ -599,66 +672,23 @@ export async function createOrScheduleSubscriptionForClub(
     );
 
     // 4) Cross-club / idempotency checks inside txn using verified ids
-    if (finalTransactionId) {
-      const r = await client.query(
-        `SELECT *
-         FROM club_subscriptions
-         WHERE transaction_id = $1
-         LIMIT 1`,
-        [finalTransactionId]
-      );
+    const existing = await findExistingSubscriptionByVerifiedIds(
+      clubId,
+      {
+        transactionId: finalTransactionId,
+        originalTransactionId: finalOriginalTransactionId,
+        purchaseToken: finalPurchaseToken,
+      },
+      client
+    );
 
-      if (r.rows[0]) {
-        const existing = assertExistingSubscriptionBelongsToClub(
-          r.rows[0],
-          clubId
-        );
-        await client.query('COMMIT');
-        return { subscription: existing, idempotent: true };
-      }
-    }
-
-    if (finalOriginalTransactionId && !finalTransactionId) {
-      const r = await client.query(
-        `SELECT *
-         FROM club_subscriptions
-         WHERE original_transaction_id = $1
-         ORDER BY created_at DESC
-         LIMIT 1`,
-        [finalOriginalTransactionId]
-      );
-
-      if (r.rows[0]) {
-        const existing = assertExistingSubscriptionBelongsToClub(
-          r.rows[0],
-          clubId
-        );
-        await client.query('COMMIT');
-        return { subscription: existing, idempotent: true };
-      }
-    }
-
-    if (finalPurchaseToken) {
-      const r = await client.query(
-        `SELECT *
-         FROM club_subscriptions
-         WHERE purchase_token = $1
-         LIMIT 1`,
-        [finalPurchaseToken]
-      );
-
-      if (r.rows[0]) {
-        const existing = assertExistingSubscriptionBelongsToClub(
-          r.rows[0],
-          clubId
-        );
-        await client.query('COMMIT');
-        return { subscription: existing, idempotent: true };
-      }
+    if (existing) {
+      await client.query('COMMIT');
+      return { subscription: existing, idempotent: true };
     }
 
     // 5) Refresh current statuses inside the same txn
-    await refreshClubSubscriptionStatuses(clubId, client);
+    await refreshClubSubscriptionStatusesInTxn(clubId, client);
 
     const now = new Date();
 
@@ -772,58 +802,42 @@ export async function createOrScheduleSubscriptionForClub(
   } catch (error) {
     await client.query('ROLLBACK');
 
-    // Graceful fallback for races on unique constraints
-    if (finalTransactionId) {
-      const r = await db.query(
-        `SELECT *
-         FROM club_subscriptions
-         WHERE transaction_id = $1
-         LIMIT 1`,
-        [finalTransactionId]
+    if (__DEV__) {
+      logger.error(
+        '[subscription] createOrScheduleSubscriptionForClub failed',
+        {
+          error,
+          clubId,
+          actorMemberId,
+          platform,
+          productId,
+          transactionId: finalTransactionId,
+          originalTransactionId: finalOriginalTransactionId,
+          purchaseToken: finalPurchaseToken,
+          orderId: finalOrderId,
+        }
       );
-
-      if (r.rows[0]) {
-        const existing = assertExistingSubscriptionBelongsToClub(
-          r.rows[0],
-          clubId
-        );
-        return { subscription: existing, idempotent: true };
-      }
     }
 
-    if (finalPurchaseToken) {
-      const r = await db.query(
-        `SELECT *
-         FROM club_subscriptions
-         WHERE purchase_token = $1
-         LIMIT 1`,
-        [finalPurchaseToken]
-      );
+    // Graceful fallback for races on unique constraints or duplicate inserts
+    if (isUniqueViolation(error)) {
+      const existing = await findExistingSubscriptionByVerifiedIds(clubId, {
+        transactionId: finalTransactionId,
+        originalTransactionId: finalOriginalTransactionId,
+        purchaseToken: finalPurchaseToken,
+      });
 
-      if (r.rows[0]) {
-        const existing = assertExistingSubscriptionBelongsToClub(
-          r.rows[0],
-          clubId
-        );
+      if (existing) {
         return { subscription: existing, idempotent: true };
       }
-    }
+    } else {
+      const existing = await findExistingSubscriptionByVerifiedIds(clubId, {
+        transactionId: finalTransactionId,
+        originalTransactionId: finalOriginalTransactionId,
+        purchaseToken: finalPurchaseToken,
+      });
 
-    if (finalOriginalTransactionId && !finalTransactionId) {
-      const r = await db.query(
-        `SELECT *
-         FROM club_subscriptions
-         WHERE original_transaction_id = $1
-         ORDER BY created_at DESC
-         LIMIT 1`,
-        [finalOriginalTransactionId]
-      );
-
-      if (r.rows[0]) {
-        const existing = assertExistingSubscriptionBelongsToClub(
-          r.rows[0],
-          clubId
-        );
+      if (existing) {
         return { subscription: existing, idempotent: true };
       }
     }

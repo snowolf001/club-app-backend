@@ -8,7 +8,17 @@ import {
   getClubProStatus,
   createOrScheduleSubscriptionForClub,
   refreshClubSubscriptionStatuses,
+  assertUserBelongsToClub,
 } from '../services/subscriptionService';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function maskTokenSuffix(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length === 0) {
+    return null;
+  }
+  return value.slice(-8);
+}
 
 // ─── POST /api/subscriptions/verify ──────────────────────────────────────────
 
@@ -35,6 +45,7 @@ export async function verifyPurchaseHandler(
     if (!clubId || !isValidUUID(clubId)) {
       throw new AppError(400, 'INVALID_INPUT', 'clubId must be a valid UUID');
     }
+
     if (!platform || !['ios', 'android'].includes(platform)) {
       throw new AppError(
         400,
@@ -42,9 +53,11 @@ export async function verifyPurchaseHandler(
         "platform must be 'ios' or 'android'"
       );
     }
+
     if (!productId) {
       throw new AppError(400, 'INVALID_INPUT', 'productId is required');
     }
+
     if (platform === 'ios' && !receiptData) {
       throw new AppError(
         400,
@@ -52,6 +65,7 @@ export async function verifyPurchaseHandler(
         'receiptData is required for iOS'
       );
     }
+
     if (platform === 'android' && !purchaseToken) {
       throw new AppError(
         400,
@@ -60,7 +74,10 @@ export async function verifyPurchaseHandler(
       );
     }
 
-    // ── verify started ─────────────────────────────────────────────
+    // Ensure the actor belongs to the club before doing any verify work.
+    await assertUserBelongsToClub(actorMemberId, clubId);
+
+    // ── verify started ────────────────────────────────────────────────────────
     void recordSystemEvent({
       category: 'iap',
       event_type: 'verify_started',
@@ -71,6 +88,11 @@ export async function verifyPurchaseHandler(
       product_id: productId,
       purchase_token: typeof purchaseToken === 'string' ? purchaseToken : null,
       transaction_id: typeof transactionId === 'string' ? transactionId : null,
+      original_transaction_id:
+        typeof originalTransactionId === 'string'
+          ? originalTransactionId
+          : null,
+      order_id: typeof orderId === 'string' ? orderId : null,
       message: 'verify started',
     });
 
@@ -87,7 +109,7 @@ export async function verifyPurchaseHandler(
       verificationPayload,
     });
 
-    // ── ⚠️ 补：防御性记录（极少发生，但可排查） ─────────────────
+    // Defensive record for debugging; should be unreachable in normal flow.
     if (!result || !result.subscription) {
       void recordSystemEvent({
         category: 'iap',
@@ -99,11 +121,24 @@ export async function verifyPurchaseHandler(
         product_id: productId,
         purchase_token:
           typeof purchaseToken === 'string' ? purchaseToken : null,
+        transaction_id:
+          typeof transactionId === 'string' ? transactionId : null,
+        original_transaction_id:
+          typeof originalTransactionId === 'string'
+            ? originalTransactionId
+            : null,
+        order_id: typeof orderId === 'string' ? orderId : null,
         message: 'verify returned no subscription',
         details: {
           reason: 'NO_SUBSCRIPTION_CREATED',
         },
       });
+
+      throw new AppError(
+        500,
+        'INTERNAL_ERROR',
+        'Verification returned no subscription'
+      );
     }
 
     logger.info('[subscription] verifyPurchase', {
@@ -114,9 +149,16 @@ export async function verifyPurchaseHandler(
       status: result.subscription.status,
       idempotent: result.idempotent,
       actorMemberId,
+      purchaseTokenSuffix: maskTokenSuffix(purchaseToken),
+      transactionId: typeof transactionId === 'string' ? transactionId : null,
+      originalTransactionId:
+        typeof originalTransactionId === 'string'
+          ? originalTransactionId
+          : null,
+      orderId: typeof orderId === 'string' ? orderId : null,
     });
 
-    // ── verify succeeded ───────────────────────────────────────────
+    // ── verify succeeded ──────────────────────────────────────────────────────
     void recordSystemEvent({
       category: 'iap',
       event_type: 'verify_succeeded',
@@ -125,6 +167,13 @@ export async function verifyPurchaseHandler(
       membership_id: actorMemberId,
       platform: platform as 'ios' | 'android',
       product_id: productId,
+      purchase_token: typeof purchaseToken === 'string' ? purchaseToken : null,
+      transaction_id: typeof transactionId === 'string' ? transactionId : null,
+      original_transaction_id:
+        typeof originalTransactionId === 'string'
+          ? originalTransactionId
+          : null,
+      order_id: typeof orderId === 'string' ? orderId : null,
       related_subscription_id: result.subscription.id,
       message: result.idempotent ? 'idempotent' : 'verify succeeded',
       details: {
@@ -143,31 +192,50 @@ export async function verifyPurchaseHandler(
         activeSubscription: proStatus.activeSubscription,
         scheduledSubscription: proStatus.scheduledSubscription,
         createdSubscription: result.subscription,
+        idempotent: result.idempotent,
       },
     });
   } catch (err) {
-    // ── verify failed (exception) ─────────────────────────────────
+    const clubId =
+      typeof req.body?.clubId === 'string' ? req.body.clubId : null;
+    const platform =
+      typeof req.body?.platform === 'string' &&
+      ['ios', 'android'].includes(req.body.platform)
+        ? (req.body.platform as 'ios' | 'android')
+        : null;
+    const actorMemberId =
+      typeof req.headers['x-member-id'] === 'string'
+        ? req.headers['x-member-id']
+        : null;
+
+    // ── verify failed (exception) ────────────────────────────────────────────
     void recordSystemEvent({
       category: 'iap',
       event_type: 'verify_failed',
       event_status: 'failure',
-      club_id: typeof req.body?.clubId === 'string' ? req.body.clubId : null,
-      platform:
-        typeof req.body?.platform === 'string' &&
-        ['ios', 'android'].includes(req.body.platform)
-          ? (req.body.platform as 'ios' | 'android')
-          : null,
+      club_id: clubId,
+      membership_id: actorMemberId,
+      platform,
       product_id:
         typeof req.body?.productId === 'string' ? req.body.productId : null,
       purchase_token:
         typeof req.body?.purchaseToken === 'string'
           ? req.body.purchaseToken
           : null,
+      transaction_id:
+        typeof req.body?.transactionId === 'string'
+          ? req.body.transactionId
+          : null,
+      original_transaction_id:
+        typeof req.body?.originalTransactionId === 'string'
+          ? req.body.originalTransactionId
+          : null,
+      order_id: typeof req.body?.orderId === 'string' ? req.body.orderId : null,
       message: err instanceof Error ? err.message : String(err),
       details: {
         reason: 'EXCEPTION_THROWN',
         productId: req.body?.productId,
-        purchaseTokenSuffix: req.body?.purchaseToken?.slice(-8),
+        purchaseTokenSuffix: maskTokenSuffix(req.body?.purchaseToken),
       },
     });
 
@@ -190,8 +258,6 @@ export async function getProStatusHandler(
       throw new AppError(400, 'INVALID_INPUT', 'clubId must be a valid UUID');
     }
 
-    const { assertUserBelongsToClub } =
-      await import('../services/subscriptionService');
     await assertUserBelongsToClub(actorMemberId, clubId);
 
     const status = await getClubProStatus(clubId);
@@ -217,8 +283,6 @@ export async function refreshStatusHandler(
       throw new AppError(400, 'INVALID_INPUT', 'clubId must be a valid UUID');
     }
 
-    const { assertUserBelongsToClub } =
-      await import('../services/subscriptionService');
     await assertUserBelongsToClub(actorMemberId, clubId);
     await refreshClubSubscriptionStatuses(clubId);
 
@@ -236,7 +300,7 @@ export async function refreshStatusHandler(
   }
 }
 
-// ─── POST /api/subscriptions/webhooks/apple ───────────────────────────────────
+// ─── POST /api/subscriptions/webhooks/apple ──────────────────────────────────
 
 export async function appleWebhookHandler(
   req: Request,
@@ -253,7 +317,7 @@ export async function appleWebhookHandler(
   }
 }
 
-// ─── POST /api/subscriptions/webhooks/google ──────────────────────────────────
+// ─── POST /api/subscriptions/webhooks/google ─────────────────────────────────
 
 export async function googleWebhookHandler(
   req: Request,

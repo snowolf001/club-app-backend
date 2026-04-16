@@ -36,9 +36,17 @@ CREATE TABLE IF NOT EXISTS club_subscriptions (
 );
 
 -- Query indexes
-CREATE INDEX IF NOT EXISTS idx_csub_club_id ON club_subscriptions(club_id);
-CREATE INDEX IF NOT EXISTS idx_csub_status  ON club_subscriptions(status);
-CREATE INDEX IF NOT EXISTS idx_csub_ends_at ON club_subscriptions(ends_at);
+CREATE INDEX IF NOT EXISTS idx_csub_club_id
+  ON club_subscriptions(club_id);
+
+CREATE INDEX IF NOT EXISTS idx_csub_status
+  ON club_subscriptions(status);
+
+CREATE INDEX IF NOT EXISTS idx_csub_ends_at
+  ON club_subscriptions(ends_at);
+
+CREATE INDEX IF NOT EXISTS idx_csub_club_status_starts_ends
+  ON club_subscriptions(club_id, status, starts_at, ends_at);
 
 -- Lookup index for iOS restore flow
 CREATE INDEX IF NOT EXISTS idx_csub_orig_tx
@@ -61,3 +69,11 @@ ALTER TABLE clubs
   ADD COLUMN IF NOT EXISTS pro_status     TEXT        DEFAULT 'free' CHECK (pro_status IN ('free', 'pro')),
   ADD COLUMN IF NOT EXISTS pro_expires_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS pro_updated_at TIMESTAMPTZ;
+
+-- Backfill + tighten nullability for pro_status
+UPDATE clubs
+SET pro_status = 'free'
+WHERE pro_status IS NULL;
+
+ALTER TABLE clubs
+  ALTER COLUMN pro_status SET NOT NULL;
