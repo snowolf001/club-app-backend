@@ -27,7 +27,61 @@ interface GooglePlayDeveloperNotification {
   testNotification?: {
     version?: string;
   };
+  // Google also sends these notification types via RTDN.
+  // We do not process them, but we must recognise them to avoid logging false failures.
+  oneTimeProductNotification?: {
+    version?: string;
+    notificationType?: number;
+    purchaseToken?: string;
+    sku?: string;
+  };
+  voidedPurchaseNotification?: {
+    purchaseToken?: string;
+    orderId?: string;
+    productType?: number; // 1 = in-app, 2 = subscription
+    refundType?: number; // 1 = full-content, 2 = quantity-based
+  };
   [key: string]: unknown;
+}
+
+// All recognised top-level RTDN notification type keys.
+// Used to identify unknown future types for logging.
+const KNOWN_NOTIFICATION_KEYS = [
+  'subscriptionNotification',
+  'testNotification',
+  'oneTimeProductNotification',
+  'voidedPurchaseNotification',
+] as const;
+
+type RtdnNotificationType =
+  | 'subscription'
+  | 'test'
+  | 'one_time_product'
+  | 'voided_purchase'
+  | 'unknown';
+
+function classifyRtdnPayload(
+  payload: GooglePlayDeveloperNotification
+): RtdnNotificationType {
+  if (payload.subscriptionNotification) return 'subscription';
+  if (payload.testNotification) return 'test';
+  if (payload.oneTimeProductNotification) return 'one_time_product';
+  if (payload.voidedPurchaseNotification) return 'voided_purchase';
+  return 'unknown';
+}
+
+function safePayloadTopLevelKeys(
+  payload: GooglePlayDeveloperNotification
+): string[] {
+  // Return only non-standard top-level keys (i.e. anything beyond the known set
+  // plus version/packageName/eventTimeMillis) to help diagnose future unknowns.
+  const standard = new Set([
+    'version',
+    'packageName',
+    'eventTimeMillis',
+    ...KNOWN_NOTIFICATION_KEYS,
+  ]);
+  return Object.keys(payload).filter((k) => !standard.has(k));
 }
 
 const pubsubJwtClient = new OAuth2Client();
@@ -340,46 +394,89 @@ export async function processGoogleRtdnEnvelope(
 
   const payload = decodePubSubMessage(message.data);
 
+  const rtdnType = classifyRtdnPayload(payload);
+  const unknownKeys = safePayloadTopLevelKeys(payload);
+
   logger.info('[google-rtdn] notification received', {
     messageId,
-    packageName: payload.packageName,
-    eventTimeMillis: payload.eventTimeMillis,
+    packageName: payload.packageName ?? null,
+    eventTimeMillis: payload.eventTimeMillis ?? null,
+    rtdnType,
     hasSubscriptionNotification: !!payload.subscriptionNotification,
     hasTestNotification: !!payload.testNotification,
+    hasOneTimeProductNotification: !!payload.oneTimeProductNotification,
+    hasVoidedPurchaseNotification: !!payload.voidedPurchaseNotification,
+    unknownTopLevelKeys: unknownKeys.length > 0 ? unknownKeys : undefined,
   });
   // webhook_received is not written to system_events — it fires for every
   // message including test/retry traffic and adds noise without signal.
   // The logger.info above is sufficient for operational visibility.
 
-  const sub = payload.subscriptionNotification;
-
   // Persist every incoming event first, even test or malformed ones.
+  // sub may be undefined here for non-subscription notification types.
   await insertWebhookEvent({
     messageId: messageId || null,
     payload,
-    productId: sub?.subscriptionId ?? null,
-    purchaseToken: sub?.purchaseToken ?? null,
-    notificationType: sub?.notificationType ?? null,
+    productId: payload.subscriptionNotification?.subscriptionId ?? null,
+    purchaseToken: payload.subscriptionNotification?.purchaseToken ?? null,
+    notificationType:
+      payload.subscriptionNotification?.notificationType ?? null,
   });
 
-  if (payload.testNotification) {
+  // ── Route by notification type ────────────────────────────────────────────
+
+  if (rtdnType === 'test') {
     logger.info('[google-rtdn] test notification received', { messageId });
-    if (messageId) {
-      markMessageProcessed(messageId);
-    }
+    if (messageId) markMessageProcessed(messageId);
     return;
   }
 
-  if (!sub) {
-    logger.warn('[google-rtdn] non-subscription notification ignored', {
-      messageId,
-      payload,
-    });
-    if (messageId) {
-      markMessageProcessed(messageId);
-    }
+  if (rtdnType === 'one_time_product') {
+    // Google sends these for one-time IAP purchases. We don't process them,
+    // but they are expected and should NOT produce webhook_failed rows.
+    logger.info(
+      '[google-rtdn] one_time_product notification ignored (not supported)',
+      {
+        messageId,
+        packageName: payload.packageName ?? null,
+        sku: payload.oneTimeProductNotification?.sku ?? null,
+        notificationType:
+          payload.oneTimeProductNotification?.notificationType ?? null,
+      }
+    );
+    if (messageId) markMessageProcessed(messageId);
     return;
   }
+
+  if (rtdnType === 'voided_purchase') {
+    // Google sends these when a purchase is voided/refunded. We don't process them.
+    logger.info(
+      '[google-rtdn] voided_purchase notification ignored (not supported)',
+      {
+        messageId,
+        packageName: payload.packageName ?? null,
+        productType: payload.voidedPurchaseNotification?.productType ?? null,
+      }
+    );
+    if (messageId) markMessageProcessed(messageId);
+    return;
+  }
+
+  if (rtdnType === 'unknown') {
+    // Future Google RTDN type we don't recognise yet. Ack it (return 200 from
+    // the controller) but log with enough context to diagnose.
+    logger.warn('[google-rtdn] unknown notification type ignored', {
+      messageId,
+      packageName: payload.packageName ?? null,
+      unknownTopLevelKeys: unknownKeys,
+    });
+    if (messageId) markMessageProcessed(messageId);
+    return;
+  }
+
+  // ── subscriptionNotification path ────────────────────────────────────────
+  // At this point rtdnType === 'subscription', so sub is always defined.
+  const sub = payload.subscriptionNotification!;
 
   const expectedPackageName = requireEnv('GOOGLE_PLAY_PACKAGE_NAME');
   if (payload.packageName && payload.packageName !== expectedPackageName) {
