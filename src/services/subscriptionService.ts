@@ -412,6 +412,22 @@ export async function getScheduledSubscriptionForClub(
   return result.rows[0] ? rowToRecord(result.rows[0]) : null;
 }
 
+export async function getLastExpiredSubscriptionForClub(
+  clubId: string,
+  client: Queryable = db
+): Promise<SubscriptionRecord | null> {
+  const result = await client.query(
+    `SELECT *
+       FROM club_subscriptions
+      WHERE club_id = $1
+        AND status = 'expired'
+      ORDER BY ends_at DESC
+      LIMIT 1`,
+    [clubId]
+  );
+  return result.rows[0] ? rowToRecord(result.rows[0]) : null;
+}
+
 // ─── Refresh / expiry sweep ───────────────────────────────────────────────────
 
 async function refreshClubSubscriptionStatusesInTxn(

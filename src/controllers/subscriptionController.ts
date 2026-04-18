@@ -9,12 +9,14 @@ import {
   createOrScheduleSubscriptionForClub,
   refreshClubSubscriptionStatuses,
   assertUserBelongsToClub,
+  getLastExpiredSubscriptionForClub,
   SubscriptionRecord,
   ClubProStatus,
 } from '../services/subscriptionService';
 
 export type ClubSubscriptionStatusDto = {
   isPro: boolean;
+  billingState: 'free' | 'active_renewing' | 'active_cancelled' | 'expired';
   activeSubscription: {
     id: string;
     platform: 'ios' | 'android';
@@ -23,8 +25,19 @@ export type ClubSubscriptionStatusDto = {
     expiresAt: string | null;
     status: string;
     productId: string | null;
+    autoRenews: boolean | null;
   } | null;
   scheduledSubscription: {
+    id: string;
+    platform: 'ios' | 'android';
+    planCycle: 'monthly' | 'yearly';
+    startsAt: string | null;
+    expiresAt: string | null;
+    status: string;
+    productId: string | null;
+    autoRenews: boolean | null;
+  } | null;
+  lastExpiredSubscription: {
     id: string;
     platform: 'ios' | 'android';
     planCycle: 'monthly' | 'yearly';
@@ -47,14 +60,58 @@ function toSubscriptionDto(
     expiresAt: sub.endsAt ? sub.endsAt.toISOString() : null,
     status: sub.status,
     productId: sub.productId ?? null,
+    // autoRenews is not stored in DB yet — return null for forward-compat.
+    // When webhook data is enriched, populate from verification_payload.
+    autoRenews: null,
   };
 }
 
-function toProStatusDto(status: ClubProStatus): ClubSubscriptionStatusDto {
+function toExpiredDto(
+  sub: SubscriptionRecord | null | undefined
+): ClubSubscriptionStatusDto['lastExpiredSubscription'] {
+  if (!sub) return null;
+  return {
+    id: sub.id,
+    platform: sub.platform,
+    planCycle: sub.plan,
+    startsAt: sub.startsAt ? sub.startsAt.toISOString() : null,
+    expiresAt: sub.endsAt ? sub.endsAt.toISOString() : null,
+    status: sub.status,
+    productId: sub.productId ?? null,
+  };
+}
+
+function deriveBillingState(
+  active: SubscriptionRecord | null,
+  lastExpired: SubscriptionRecord | null
+): ClubSubscriptionStatusDto['billingState'] {
+  if (!active) {
+    return lastExpired ? 'expired' : 'free';
+  }
+  // autoRenews not stored — treat as renewing by default
+  return 'active_renewing';
+}
+
+async function getLastExpiredSubscription(
+  clubId: string
+): Promise<SubscriptionRecord | null> {
+  return getLastExpiredSubscriptionForClub(clubId);
+}
+
+function toProStatusDto(
+  status: ClubProStatus,
+  lastExpired: SubscriptionRecord | null
+): ClubSubscriptionStatusDto {
+  const billingState = deriveBillingState(
+    status.activeSubscription,
+    lastExpired
+  );
   return {
     isPro: status.isPro,
+    billingState,
     activeSubscription: toSubscriptionDto(status.activeSubscription),
     scheduledSubscription: toSubscriptionDto(status.scheduledSubscription),
+    lastExpiredSubscription: toExpiredDto(lastExpired),
   };
 }
 
@@ -229,11 +286,12 @@ export async function verifyPurchaseHandler(
 
     // Return full club Pro status + the subscription that was created/found
     const proStatus = await getClubProStatus(clubId);
+    const lastExpiredForVerify = await getLastExpiredSubscription(clubId);
 
     res.json({
       success: true,
       data: {
-        ...toProStatusDto(proStatus),
+        ...toProStatusDto(proStatus, lastExpiredForVerify),
         createdSubscription: toSubscriptionDto(result.subscription),
         idempotent: result.idempotent,
       },
@@ -305,6 +363,8 @@ export async function getProStatusHandler(
 
     const status = await getClubProStatus(clubId);
 
+    const lastExpiredForStatus = await getLastExpiredSubscription(clubId);
+
     // Provide detailed active subscription diagnostics if present
     logger.info('[subscription] GET /status debug', {
       clubId,
@@ -315,10 +375,16 @@ export async function getProStatusHandler(
         status.activeSubscription?.startsAt?.toISOString() ?? null,
       activeEndsAt: status.activeSubscription?.endsAt?.toISOString() ?? null,
       scheduledSubscriptionId: status.scheduledSubscription?.id ?? null,
-      resultPayload: toProStatusDto(status),
+      billingState: deriveBillingState(
+        status.activeSubscription,
+        lastExpiredForStatus
+      ),
     });
 
-    res.json({ success: true, data: toProStatusDto(status) });
+    res.json({
+      success: true,
+      data: toProStatusDto(status, lastExpiredForStatus),
+    });
   } catch (err) {
     next(err);
   }
@@ -343,6 +409,7 @@ export async function refreshStatusHandler(
     await refreshClubSubscriptionStatuses(clubId);
 
     const status = await getClubProStatus(clubId);
+    const lastExpiredForRefresh = await getLastExpiredSubscription(clubId);
 
     logger.info('[subscription] refreshStatus', {
       clubId,
@@ -350,7 +417,10 @@ export async function refreshStatusHandler(
       actorMemberId,
     });
 
-    res.json({ success: true, data: toProStatusDto(status) });
+    res.json({
+      success: true,
+      data: toProStatusDto(status, lastExpiredForRefresh),
+    });
   } catch (err) {
     next(err);
   }
