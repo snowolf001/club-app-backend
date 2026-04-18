@@ -64,12 +64,11 @@ export async function refreshGoogleSubscriptionByPurchaseToken(
     UPDATE club_subscriptions
        SET status = $1,
            order_id = COALESCE($2, order_id),
-           started_at = COALESCE($3, started_at),
-           expires_at = $4,
-           provider_raw = COALESCE($5::jsonb, provider_raw),
-           provider_error = $6,
+           starts_at = COALESCE($3, starts_at),
+           ends_at = coalesce($4, ends_at),
+           verification_payload = COALESCE($5::jsonb, verification_payload),
            updated_at = NOW()
-     WHERE id = $7
+     WHERE id = $6
     `,
     [
       status,
@@ -77,7 +76,6 @@ export async function refreshGoogleSubscriptionByPurchaseToken(
       startedAt,
       expiresAt,
       verifyResult.raw ? JSON.stringify(verifyResult.raw) : null,
-      verifyResult.errorMessage ?? null,
       row.id,
     ]
   );
@@ -105,8 +103,8 @@ export interface SubscriptionRecord {
   status: 'active' | 'scheduled' | 'expired' | 'canceled';
   productId: string;
   purchasedByMembershipId: string;
-  startsAt: Date;
-  endsAt: Date;
+  startsAt: Date | null;
+  endsAt: Date | null;
   transactionId: string | null;
   originalTransactionId: string | null;
   purchaseToken: string | null;
@@ -200,8 +198,8 @@ function rowToRecord(row: Record<string, unknown>): SubscriptionRecord {
     status: row.status as SubscriptionRecord['status'],
     productId: row.product_id as string,
     purchasedByMembershipId: row.purchased_by_membership_id as string,
-    startsAt: new Date(row.starts_at as string),
-    endsAt: new Date(row.ends_at as string),
+    startsAt: row.starts_at ? new Date(row.starts_at as string) : null,
+    endsAt: row.ends_at ? new Date(row.ends_at as string) : null,
     transactionId: (row.transaction_id as string | null) ?? null,
     originalTransactionId:
       (row.original_transaction_id as string | null) ?? null,
@@ -250,7 +248,9 @@ function isUniqueViolation(error: unknown): boolean {
 function calculateClubEntitlementWindow(
   now: Date,
   plan: PlanCycle,
-  lastEndsAt: Date | null
+  lastEndsAt: Date | null,
+  providerStartsAt?: Date | null,
+  providerEndsAt?: Date | null
 ): {
   startsAt: Date;
   endsAt: Date;
@@ -263,11 +263,15 @@ function calculateClubEntitlementWindow(
     startsAt = lastEndsAt;
     status = 'scheduled';
   } else {
-    startsAt = now;
+    startsAt = providerStartsAt ?? now;
     status = 'active';
   }
 
-  const endsAt = addPlanInterval(startsAt, plan);
+  // If active, use provider expiry. If scheduled, add interval to defer starts_at.
+  const endsAt =
+    status === 'active' && providerEndsAt
+      ? providerEndsAt
+      : addPlanInterval(startsAt, plan);
 
   return { startsAt, endsAt, status };
 }
@@ -365,18 +369,33 @@ export async function getActiveSubscriptionForClub(
      FROM club_subscriptions
      WHERE club_id = $1
        AND status = 'active'
-       AND starts_at <= $2
-       AND ends_at > $2
-     ORDER BY ends_at DESC
+       AND (starts_at <= $2 OR starts_at IS NULL)
+       AND (ends_at > $2 OR ends_at IS NULL)
+     ORDER BY starts_at DESC
      LIMIT 1`,
     [clubId, at]
   );
 
-  return result.rows[0] ? rowToRecord(result.rows[0]) : null;
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  const record = rowToRecord(row);
+
+  if (!record.endsAt) {
+    logger.warn('[subscription] Active subscription is missing ends_at', {
+      clubId,
+      subscriptionId: record.id,
+    });
+  }
+
+  return record;
 }
 
 export async function getScheduledSubscriptionForClub(
   clubId: string,
+  at: Date = new Date(),
   client: Queryable = db
 ): Promise<SubscriptionRecord | null> {
   const result = await client.query(
@@ -384,9 +403,10 @@ export async function getScheduledSubscriptionForClub(
      FROM club_subscriptions
      WHERE club_id = $1
        AND status = 'scheduled'
+       AND (starts_at > $2 OR starts_at IS NULL)
      ORDER BY starts_at ASC
      LIMIT 1`,
-    [clubId]
+    [clubId, at]
   );
 
   return result.rows[0] ? rowToRecord(result.rows[0]) : null;
@@ -518,13 +538,15 @@ export async function getClubProStatus(clubId: string): Promise<ClubProStatus> {
   return withDbTransaction(async (client) => {
     await refreshClubSubscriptionStatusesInTxn(clubId, client);
 
+    const now = new Date();
     const activeSubscription = await getActiveSubscriptionForClub(
       clubId,
-      new Date(),
+      now,
       client
     );
     const scheduledSubscription = await getScheduledSubscriptionForClub(
       clubId,
+      now,
       client
     );
 
@@ -654,6 +676,13 @@ export async function createOrScheduleSubscriptionForClub(
     verifyResult.purchaseToken ?? purchaseToken ?? null;
   const finalOrderId = verifyResult.orderId ?? orderId ?? null;
 
+  const providerStartsAt = verifyResult.purchaseDateMs
+    ? new Date(verifyResult.purchaseDateMs)
+    : null;
+  const providerEndsAt = verifyResult.expiresAtMs
+    ? new Date(verifyResult.expiresAtMs)
+    : null;
+
   const client = (await db.connect()) as TransactionalClient;
 
   try {
@@ -710,7 +739,9 @@ export async function createOrScheduleSubscriptionForClub(
     const { startsAt, endsAt, status } = calculateClubEntitlementWindow(
       now,
       plan,
-      lastEndsAt
+      lastEndsAt,
+      providerStartsAt,
+      providerEndsAt
     );
 
     // 6) Insert subscription

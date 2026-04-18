@@ -9,9 +9,54 @@ import {
   createOrScheduleSubscriptionForClub,
   refreshClubSubscriptionStatuses,
   assertUserBelongsToClub,
+  SubscriptionRecord,
+  ClubProStatus,
 } from '../services/subscriptionService';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+export type ClubSubscriptionStatusDto = {
+  isPro: boolean;
+  activeSubscription: {
+    id: string;
+    platform: 'ios' | 'android';
+    planCycle: 'monthly' | 'yearly';
+    startsAt: string | null;
+    expiresAt: string | null;
+    status: string;
+    productId: string | null;
+  } | null;
+  scheduledSubscription: {
+    id: string;
+    platform: 'ios' | 'android';
+    planCycle: 'monthly' | 'yearly';
+    startsAt: string | null;
+    expiresAt: string | null;
+    status: string;
+    productId: string | null;
+  } | null;
+};
+
+function toSubscriptionDto(
+  sub: SubscriptionRecord | null | undefined
+): ClubSubscriptionStatusDto['activeSubscription'] {
+  if (!sub) return null;
+  return {
+    id: sub.id,
+    platform: sub.platform,
+    planCycle: sub.plan,
+    startsAt: sub.startsAt ? sub.startsAt.toISOString() : null,
+    expiresAt: sub.endsAt ? sub.endsAt.toISOString() : null,
+    status: sub.status,
+    productId: sub.productId ?? null,
+  };
+}
+
+function toProStatusDto(status: ClubProStatus): ClubSubscriptionStatusDto {
+  return {
+    isPro: status.isPro,
+    activeSubscription: toSubscriptionDto(status.activeSubscription),
+    scheduledSubscription: toSubscriptionDto(status.scheduledSubscription),
+  };
+}
 
 function maskTokenSuffix(value: unknown): string | null {
   if (typeof value !== 'string' || value.length === 0) {
@@ -188,10 +233,8 @@ export async function verifyPurchaseHandler(
     res.json({
       success: true,
       data: {
-        isPro: proStatus.isPro,
-        activeSubscription: proStatus.activeSubscription,
-        scheduledSubscription: proStatus.scheduledSubscription,
-        createdSubscription: result.subscription,
+        ...toProStatusDto(proStatus),
+        createdSubscription: toSubscriptionDto(result.subscription),
         idempotent: result.idempotent,
       },
     });
@@ -262,7 +305,20 @@ export async function getProStatusHandler(
 
     const status = await getClubProStatus(clubId);
 
-    res.json({ success: true, data: status });
+    // Provide detailed active subscription diagnostics if present
+    logger.info('[subscription] GET /status debug', {
+      clubId,
+      now: new Date().toISOString(),
+      isPro: status.isPro,
+      activeSubscriptionId: status.activeSubscription?.id ?? null,
+      activeStartsAt:
+        status.activeSubscription?.startsAt?.toISOString() ?? null,
+      activeEndsAt: status.activeSubscription?.endsAt?.toISOString() ?? null,
+      scheduledSubscriptionId: status.scheduledSubscription?.id ?? null,
+      resultPayload: toProStatusDto(status),
+    });
+
+    res.json({ success: true, data: toProStatusDto(status) });
   } catch (err) {
     next(err);
   }
@@ -294,7 +350,7 @@ export async function refreshStatusHandler(
       actorMemberId,
     });
 
-    res.json({ success: true, data: status });
+    res.json({ success: true, data: toProStatusDto(status) });
   } catch (err) {
     next(err);
   }
