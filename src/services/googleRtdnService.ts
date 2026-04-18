@@ -333,14 +333,8 @@ export async function processGoogleRtdnEnvelope(
 
   const messageId = message.messageId ?? '';
   if (messageId && wasMessageProcessed(messageId)) {
+    // Duplicate — already processed in this process instance. Log only, no DB write.
     logger.info('[google-rtdn] duplicate message ignored', { messageId });
-    void recordSystemEvent({
-      category: 'webhook',
-      event_type: 'webhook_duplicate_ignored',
-      event_status: 'info',
-      platform: 'android',
-      message: messageId,
-    });
     return;
   }
 
@@ -353,21 +347,9 @@ export async function processGoogleRtdnEnvelope(
     hasSubscriptionNotification: !!payload.subscriptionNotification,
     hasTestNotification: !!payload.testNotification,
   });
-
-  void recordSystemEvent({
-    category: 'webhook',
-    event_type: 'webhook_received',
-    event_status: 'info',
-    platform: 'android',
-    product_id: payload.subscriptionNotification?.subscriptionId ?? null,
-    purchase_token: payload.subscriptionNotification?.purchaseToken ?? null,
-    message: messageId || null,
-    details: {
-      packageName: payload.packageName ?? null,
-      hasSubscriptionNotification: !!payload.subscriptionNotification,
-      hasTestNotification: !!payload.testNotification,
-    },
-  });
+  // webhook_received is not written to system_events — it fires for every
+  // message including test/retry traffic and adds noise without signal.
+  // The logger.info above is sufficient for operational visibility.
 
   const sub = payload.subscriptionNotification;
 

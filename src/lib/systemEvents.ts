@@ -19,16 +19,69 @@ export interface SystemEventInput {
   details?: unknown;
 }
 
+// ─── Webhook failure dedupe ───────────────────────────────────────────────────
+// Prevents repeated identical webhook_failed rows from flooding system_events
+// when PubSub retries or auth is misconfigured. In-memory per-process.
+
+const WEBHOOK_FAILURE_DEDUPE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const recentWebhookFailures = new Map<string, number>(); // signature -> expiresAtMs
+
+function cleanupWebhookFailureCache(): void {
+  const now = Date.now();
+  for (const [key, expiresAt] of recentWebhookFailures.entries()) {
+    if (expiresAt <= now) recentWebhookFailures.delete(key);
+  }
+}
+
+function makeWebhookFailureSignature(input: SystemEventInput): string {
+  return [
+    input.event_type,
+    input.platform ?? '',
+    // First 120 chars groups similar error messages without exact matching
+    (input.message ?? '').slice(0, 120),
+    // Last 8 chars of token to scope per-purchase deduplication
+    input.purchase_token ? input.purchase_token.slice(-8) : '',
+  ].join('\x00');
+}
+
+function isDuplicateWebhookFailure(input: SystemEventInput): boolean {
+  cleanupWebhookFailureCache();
+  const sig = makeWebhookFailureSignature(input);
+  const existing = recentWebhookFailures.get(sig);
+  return !!existing && existing > Date.now();
+}
+
+function markWebhookFailureRecorded(input: SystemEventInput): void {
+  cleanupWebhookFailureCache();
+  const sig = makeWebhookFailureSignature(input);
+  recentWebhookFailures.set(sig, Date.now() + WEBHOOK_FAILURE_DEDUPE_WINDOW_MS);
+}
+
 /**
  * Write one row to `system_events`.
  *
  * Best-effort: catches and logs all errors internally.
  * A failure here must never affect calling code — callers should fire-and-forget
  * with `void recordSystemEvent(...)`.
+ *
+ * webhook_failed events are deduplicated within a 10-minute window to prevent
+ * PubSub retry loops from flooding the table.
  */
 export async function recordSystemEvent(
   input: SystemEventInput
 ): Promise<void> {
+  // Deduplicate repeated webhook_failed rows caused by PubSub retries
+  if (input.event_type === 'webhook_failed') {
+    if (isDuplicateWebhookFailure(input)) {
+      logger.info('[system-events] dedupe suppressed webhook_failed', {
+        platform: input.platform,
+        message: (input.message ?? '').slice(0, 80),
+      });
+      return;
+    }
+    markWebhookFailureRecorded(input);
+  }
+
   try {
     await db.query(
       `INSERT INTO system_events (
