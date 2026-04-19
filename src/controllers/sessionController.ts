@@ -19,6 +19,7 @@ import {
   getSessionById,
   getCheckedInMembers,
   createSession,
+  updateSession,
   deleteSession,
 } from '../services/sessionService';
 
@@ -181,8 +182,15 @@ export async function createSessionHandler(
   next: NextFunction
 ): Promise<void> {
   try {
-    const { clubId, title, locationId, startTime, endTime, capacity } =
-      req.body as Record<string, unknown>;
+    const {
+      clubId,
+      title,
+      locationId,
+      startTime,
+      endTime,
+      capacity,
+      hostMembershipId,
+    } = req.body as Record<string, unknown>;
 
     if (typeof clubId !== 'string' || !isValidUUID(clubId)) {
       throw new AppError(
@@ -246,6 +254,19 @@ export async function createSessionHandler(
         'title must be a non-empty string if provided.'
       );
     }
+    if (hostMembershipId !== undefined && hostMembershipId !== null) {
+      if (
+        typeof hostMembershipId !== 'string' ||
+        !isValidUUID(hostMembershipId)
+      ) {
+        throw new AppError(
+          400,
+          'INVALID_HOST_ID',
+          'hostMembershipId must be a valid UUID.'
+        );
+      }
+    }
+
     if (typeof startTime !== 'string' || !startTime) {
       throw new AppError(400, 'INVALID_START_TIME', 'startTime is required.');
     }
@@ -262,6 +283,8 @@ export async function createSessionHandler(
         capacity > 0
           ? capacity
           : null,
+      hostMembershipId:
+        typeof hostMembershipId === 'string' ? hostMembershipId : null,
     });
 
     void createAuditLog({
@@ -427,6 +450,71 @@ export async function deleteSessionHandler(
     });
 
     res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── PATCH /api/sessions/:sessionId ──────────────────────────────────────────
+
+export async function updateSessionHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const sessionId = req.params['sessionId'] as string;
+
+    if (!isValidUUID(sessionId)) {
+      throw new AppError(
+        400,
+        'INVALID_SESSION_ID',
+        'sessionId must be a valid UUID.'
+      );
+    }
+
+    // Only hosts and owners may update sessions
+    const actorMemberId = getActorMemberId(req);
+    const actorRow = await pool.query<{ role: string }>(
+      `SELECT role FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [actorMemberId]
+    );
+    if (!canManageSession(normalizeRole(actorRow.rows[0]?.role))) {
+      throw new AppError(
+        403,
+        'UNAUTHORIZED',
+        'Only hosts and owners can update sessions.'
+      );
+    }
+
+    const { hostMembershipId } = req.body as Record<string, unknown>;
+
+    // hostMembershipId must be a UUID string or explicitly null to clear
+    if (hostMembershipId !== undefined && hostMembershipId !== null) {
+      if (
+        typeof hostMembershipId !== 'string' ||
+        !isValidUUID(hostMembershipId)
+      ) {
+        throw new AppError(
+          400,
+          'INVALID_HOST_ID',
+          'hostMembershipId must be a valid UUID.'
+        );
+      }
+    }
+
+    const resolvedHostId: string | null | undefined =
+      hostMembershipId === null
+        ? null
+        : typeof hostMembershipId === 'string'
+          ? hostMembershipId
+          : undefined;
+
+    const session = await updateSession(sessionId, {
+      hostMembershipId: resolvedHostId,
+    });
+
+    res.json({ success: true, data: session });
   } catch (error) {
     next(error);
   }

@@ -14,6 +14,8 @@ type SessionRow = {
   location_name: string | null;
   capacity: number | null;
   status: 'active' | 'closed';
+  host_membership_id: string | null;
+  host_display_name: string | null;
 };
 
 type CheckedInRow = {
@@ -38,6 +40,7 @@ export type SessionItem = {
   locationName: string | null;
   capacity: number | null;
   status: 'active' | 'closed';
+  host: { membershipId: string; displayName: string } | null;
 };
 
 export type CheckedInMember = {
@@ -63,14 +66,22 @@ function mapSessionRow(row: SessionRow): SessionItem {
     locationName: row.location_name,
     capacity: row.capacity,
     status: row.status,
+    host: row.host_membership_id
+      ? {
+          membershipId: row.host_membership_id,
+          displayName: row.host_display_name ?? '',
+        }
+      : null,
   };
 }
 
 const SESSION_SELECT = `
   SELECT s.id, s.club_id, s.title, s.starts_at, s.ends_at, s.created_at,
-         s.location_id, cl.name AS location_name, s.capacity, s.status
+         s.location_id, cl.name AS location_name, s.capacity, s.status,
+         s.host_membership_id, hm.display_name AS host_display_name
   FROM sessions s
   LEFT JOIN club_locations cl ON cl.id = s.location_id
+  LEFT JOIN memberships hm ON hm.id = s.host_membership_id
 `;
 
 // ─── Exported functions ───────────────────────────────────────────────────────
@@ -151,6 +162,25 @@ export async function deleteSession(sessionId: string): Promise<void> {
   await pool.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
 }
 
+async function assertHostInClub(
+  hostMembershipId: string,
+  clubId: string
+): Promise<void> {
+  const result = await pool.query<{ id: string }>(
+    `SELECT id FROM memberships
+     WHERE id = $1 AND club_id = $2 AND role IN ('owner', 'host') AND status = 'active'
+     LIMIT 1`,
+    [hostMembershipId, clubId]
+  );
+  if ((result.rowCount ?? 0) === 0) {
+    throw new AppError(
+      400,
+      'INVALID_HOST',
+      'Host must be an active owner or host member of this club.'
+    );
+  }
+}
+
 export async function createSession(params: {
   clubId: string;
   title?: string | null;
@@ -158,11 +188,25 @@ export async function createSession(params: {
   startTime: string;
   endTime?: string | null;
   capacity?: number | null;
+  hostMembershipId?: string | null;
 }): Promise<SessionItem> {
-  const { clubId, title, locationId, startTime, endTime, capacity } = params;
+  const {
+    clubId,
+    title,
+    locationId,
+    startTime,
+    endTime,
+    capacity,
+    hostMembershipId,
+  } = params;
+
+  if (hostMembershipId) {
+    await assertHostInClub(hostMembershipId, clubId);
+  }
+
   const result = await pool.query<{ id: string }>(
-    `INSERT INTO sessions (club_id, title, location_id, starts_at, ends_at, capacity)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    `INSERT INTO sessions (club_id, title, location_id, starts_at, ends_at, capacity, host_membership_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
     [
       clubId,
       title ? title.trim() : null,
@@ -170,7 +214,27 @@ export async function createSession(params: {
       startTime,
       endTime ?? null,
       capacity ?? null,
+      hostMembershipId ?? null,
     ]
   );
   return getSessionById(result.rows[0].id);
+}
+
+export async function updateSession(
+  sessionId: string,
+  params: { hostMembershipId?: string | null }
+): Promise<SessionItem> {
+  const session = await getSessionById(sessionId);
+
+  if (params.hostMembershipId !== undefined) {
+    if (params.hostMembershipId !== null) {
+      await assertHostInClub(params.hostMembershipId, session.clubId);
+    }
+    await pool.query(
+      `UPDATE sessions SET host_membership_id = $1, updated_at = NOW() WHERE id = $2`,
+      [params.hostMembershipId, sessionId]
+    );
+  }
+
+  return getSessionById(sessionId);
 }
