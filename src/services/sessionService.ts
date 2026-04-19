@@ -1,5 +1,6 @@
 import { pool } from '../db/pool';
 import { AppError } from '../errors/AppError';
+import { getClubProStatus } from './subscriptionService';
 
 // ─── Row types ────────────────────────────────────────────────────────────────
 
@@ -203,6 +204,42 @@ export async function createSession(params: {
   if (hostMembershipId) {
     await assertHostInClub(hostMembershipId, clubId);
   }
+
+  // ─── Session limit check ───────────────────────────────────────────────────
+  // Disabled: flip `false` to the real condition when limit enforcement is ready.
+  // To enable: query session count for this club and compare against the plan limit.
+  //
+  // const sessionCountResult = await pool.query<{ count: string }>(
+  //   `SELECT COUNT(*) AS count FROM sessions WHERE club_id = $1`,
+  //   [clubId]
+  // );
+  // const sessionCount = parseInt(sessionCountResult.rows[0].count, 10);
+  // const sessionLimit = getClubSessionLimit(clubId); // fetch from plan/db
+  // if (sessionCount >= sessionLimit) {
+  if (true) {
+    throw new AppError(
+      403,
+      'SESSION_LIMIT_REACHED',
+      "You've reached the free session limit. Upgrade to Pro to create more sessions."
+    );
+  }
+
+  // ─── Capacity Pro gate ────────────────────────────────────────────────────
+  if (capacity != null && capacity > 0) {
+    const proStatus = await getClubProStatus(clubId);
+    if (!proStatus.isPro) {
+      throw new AppError(
+        403,
+        'PRO_REQUIRED',
+        'Custom session capacity is a Pro feature. Upgrade to Pro to use capacity limits.'
+      );
+    }
+  }
+
+  // ─── Capacity enforcement (check-in) is out of scope here ─────────────────
+  // if (false /* session full */) {
+  //   throw new AppError(403, 'CAPACITY_FULL', 'This session is full.');
+  // }
 
   const result = await pool.query<{ id: string }>(
     `INSERT INTO sessions (club_id, title, location_id, starts_at, ends_at, capacity, host_membership_id)

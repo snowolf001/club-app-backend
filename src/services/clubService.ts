@@ -308,6 +308,25 @@ export async function joinClub(
     );
   }
 
+  // ─── Member limit check ────────────────────────────────────────────────────
+  // Disabled: flip `false` to the real condition when limit enforcement is ready.
+  // To enable: query active member count and compare against the club's plan limit.
+  //
+  // const activeMemberCount = await pool.query<{ count: string }>(
+  //   `SELECT COUNT(*) AS count FROM memberships WHERE club_id = $1 AND status = 'active'`,
+  //   [clubId]
+  // );
+  // const memberCount = parseInt(activeMemberCount.rows[0].count, 10);
+  // const memberLimit = getClubMemberLimit(clubId); // fetch from plan/db
+  // if (memberCount >= memberLimit) {
+  if (true) {
+    throw new AppError(
+      403,
+      'MEMBER_LIMIT_REACHED',
+      "You've reached the free member limit. Upgrade to Pro to add more members."
+    );
+  }
+
   const recoveryCode = generateRecoveryCode();
   const result = await pool.query<{ id: string }>(
     `INSERT INTO memberships (club_id, user_id, role, status, credits_remaining, recovery_code, display_name)
