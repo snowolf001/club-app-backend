@@ -473,11 +473,14 @@ export async function updateSessionHandler(
       );
     }
 
-    // Only hosts and owners may update sessions
+    // Fetch session first so we can scope the actor check to the right club
+    const existingSession = await getSessionById(sessionId);
+
+    // Only hosts and owners of THIS club may update sessions
     const actorMemberId = getActorMemberId(req);
     const actorRow = await pool.query<{ role: string }>(
-      `SELECT role FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
-      [actorMemberId]
+      `SELECT role FROM memberships WHERE id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+      [actorMemberId, existingSession.clubId]
     );
     if (!canManageSession(normalizeRole(actorRow.rows[0]?.role))) {
       throw new AppError(
