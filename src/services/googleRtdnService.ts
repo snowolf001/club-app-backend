@@ -325,7 +325,7 @@ async function updateSubscriptionFromWebhook(
     void recordSystemEvent({
       category: 'webhook',
       event_type: 'webhook_no_local_subscription',
-      event_status: 'failure',
+      event_status: 'info',
       platform: 'android',
       product_id: input.productId,
       purchase_token: input.purchaseToken,

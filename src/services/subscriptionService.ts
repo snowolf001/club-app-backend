@@ -368,7 +368,7 @@ export async function getActiveSubscriptionForClub(
     `SELECT *
      FROM club_subscriptions
      WHERE club_id = $1
-       AND status = 'active'
+       AND status IN ('active', 'canceled')
        AND (starts_at <= $2 OR starts_at IS NULL)
        AND (ends_at > $2 OR ends_at IS NULL)
      ORDER BY starts_at DESC
@@ -451,7 +451,7 @@ async function refreshClubSubscriptionStatusesInTxn(
      SET status = 'expired',
          updated_at = NOW()
      WHERE club_id = $1
-       AND status = 'active'
+       AND status IN ('active', 'canceled')
        AND ends_at <= $2`,
     [clubId, now]
   );
@@ -461,7 +461,7 @@ async function refreshClubSubscriptionStatusesInTxn(
     `SELECT id, ends_at
      FROM club_subscriptions
      WHERE club_id = $1
-       AND status = 'active'
+       AND status IN ('active', 'canceled')
        AND starts_at <= $2
        AND ends_at > $2
      ORDER BY ends_at DESC
