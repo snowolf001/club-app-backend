@@ -4,12 +4,7 @@ import { isValidUUID } from '../utils/validators';
 import { getActorMemberId } from '../lib/auth';
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
-import {
-  normalizeRole,
-  canViewReports,
-  canViewAuditLog,
-  requirePro,
-} from '../lib/permissions';
+import { requirePro } from '../lib/permissions';
 import {
   getSessionAttendees,
   getMemberHistory,
@@ -39,18 +34,8 @@ async function requireReportAccess(
   membershipId: string,
   clubId: string
 ): Promise<void> {
-  const result = await pool.query<{ role: string }>(
-    `SELECT role FROM memberships WHERE id = $1 AND club_id = $2 LIMIT 1`,
-    [membershipId, clubId]
-  );
-  const role = normalizeRole(result.rows[0]?.role);
-  if (!canViewReports(role)) {
-    throw new AppError(
-      403,
-      'FORBIDDEN',
-      'Reports are only accessible to hosts and owners.'
-    );
-  }
+  // Pro check includes role check (owner/host + active Pro subscription).
+  await requirePro(membershipId, clubId, 'reports');
 }
 
 // ─── GET /api/reports/sessions/:sessionId/attendees ───────────────────────────
@@ -458,21 +443,8 @@ export async function getReportAuditHandler(
 
     const actorId = getActorMemberId(req);
 
-    // Audit log report is Pro-only
+    // Pro-only: requirePro checks both host/owner role and active Pro subscription.
     await requirePro(actorId, clubId, 'audit-report');
-
-    // Additionally verify the caller can view audit logs
-    const memberRow = await pool.query<{ role: string }>(
-      `SELECT role FROM memberships WHERE id = $1 AND club_id = $2 LIMIT 1`,
-      [actorId, clubId]
-    );
-    if (!canViewAuditLog(normalizeRole(memberRow.rows[0]?.role))) {
-      throw new AppError(
-        403,
-        'FORBIDDEN',
-        'Only hosts and owners can view audit logs.'
-      );
-    }
 
     const from = parseDateParam(
       req.query as Record<string, unknown>,

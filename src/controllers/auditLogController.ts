@@ -1,10 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
 import { isValidUUID } from '../utils/validators';
-import { getCurrentUserId, getActorMemberId } from '../lib/auth';
-import { pool } from '../db/pool';
+import { getActorMemberId } from '../lib/auth';
 import { getAuditLogs } from '../services/auditLogService';
-import { normalizeRole, canViewAuditLog } from '../lib/permissions';
+import { requirePro } from '../lib/permissions';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -35,20 +34,9 @@ export async function getAuditLogsHandler(
       );
     }
 
-    // Host/owner only
+    // Host/owner + Pro only
     const actorMemberId = getActorMemberId(req);
-    const memberRow = await pool.query<{ role: string }>(
-      `SELECT role FROM memberships WHERE id = $1 AND club_id = $2 LIMIT 1`,
-      [actorMemberId, clubId]
-    );
-    const role = normalizeRole(memberRow.rows[0]?.role);
-    if (!canViewAuditLog(role)) {
-      throw new AppError(
-        403,
-        'FORBIDDEN',
-        'Only hosts and owners can view audit logs.'
-      );
-    }
+    await requirePro(actorMemberId, clubId, 'audit-log');
 
     const rawLimit = parseInt(String(req.query['limit'] ?? DEFAULT_LIMIT), 10);
     const rawOffset = parseInt(String(req.query['offset'] ?? 0), 10);

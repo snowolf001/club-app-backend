@@ -139,7 +139,7 @@ export async function requirePro(
   if (!isOwnerOrHost(role)) {
     throw new AppError(
       403,
-      'PRO_REQUIRED',
+      'FORBIDDEN',
       `The '${feature}' feature requires a host or owner role.`
     );
   }
