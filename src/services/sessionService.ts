@@ -216,7 +216,7 @@ export async function createSession(params: {
   // const sessionCount = parseInt(sessionCountResult.rows[0].count, 10);
   // const sessionLimit = getClubSessionLimit(clubId); // fetch from plan/db
   // if (sessionCount >= sessionLimit) {
-  if (true) {
+  if (false) {
     throw new AppError(
       403,
       'SESSION_LIMIT_REACHED',

@@ -319,7 +319,7 @@ export async function joinClub(
   // const memberCount = parseInt(activeMemberCount.rows[0].count, 10);
   // const memberLimit = getClubMemberLimit(clubId); // fetch from plan/db
   // if (memberCount >= memberLimit) {
-  if (true) {
+  if (false) {
     throw new AppError(
       403,
       'MEMBER_LIMIT_REACHED',
