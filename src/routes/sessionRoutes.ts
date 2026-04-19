@@ -8,6 +8,10 @@ import {
   postManualCheckIn,
   deleteSessionHandler,
 } from '../controllers/sessionController';
+import {
+  getSessionIntentsHandler,
+  putSessionIntentHandler,
+} from '../controllers/intentController';
 import { identifyUser } from '../middleware/identifyUser';
 
 const router = Router();
@@ -26,6 +30,16 @@ router.get(
   '/sessions/:sessionId/checked-in',
   identifyUser,
   getCheckedInHandler
+);
+router.get(
+  '/sessions/:sessionId/intents',
+  identifyUser,
+  getSessionIntentsHandler
+);
+router.put(
+  '/sessions/:sessionId/intent',
+  identifyUser,
+  putSessionIntentHandler
 );
 
 export default router;

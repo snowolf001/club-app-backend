@@ -103,8 +103,12 @@ export async function updateClubSettingsHandler(
       );
     }
 
-    const { allowMemberBackfill, memberBackfillHours, hostBackfillHours } =
-      req.body as Record<string, unknown>;
+    const {
+      allowMemberBackfill,
+      memberBackfillHours,
+      hostBackfillHours,
+      enableSessionIntents,
+    } = req.body as Record<string, unknown>;
     const settings = await updateClubSettings(clubId, {
       allowMemberBackfill:
         typeof allowMemberBackfill === 'boolean'
@@ -116,6 +120,10 @@ export async function updateClubSettingsHandler(
           : undefined,
       hostBackfillHours:
         typeof hostBackfillHours === 'number' ? hostBackfillHours : undefined,
+      enableSessionIntents:
+        typeof enableSessionIntents === 'boolean'
+          ? enableSessionIntents
+          : undefined,
     });
 
     void createAuditLog({
@@ -124,7 +132,12 @@ export async function updateClubSettingsHandler(
       entityType: 'club',
       entityId: clubId,
       action: 'club_settings_updated',
-      metadata: { allowMemberBackfill, memberBackfillHours, hostBackfillHours },
+      metadata: {
+        allowMemberBackfill,
+        memberBackfillHours,
+        hostBackfillHours,
+        enableSessionIntents,
+      },
     });
 
     res.json({ success: true, data: settings });

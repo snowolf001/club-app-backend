@@ -50,6 +50,7 @@ type ClubRow = {
   allow_member_backfill: boolean;
   member_backfill_hours: number;
   host_backfill_hours: number;
+  enable_session_intents: boolean;
 };
 
 type LocationRow = {
@@ -82,6 +83,7 @@ export type ClubSettings = {
   allowMemberBackfill: boolean;
   memberBackfillHours: number;
   hostBackfillHours: number;
+  enableSessionIntents: boolean;
 };
 
 export type ClubLocation = {
@@ -112,6 +114,7 @@ function mapSettings(row: ClubRow): ClubSettings {
     allowMemberBackfill: row.allow_member_backfill,
     memberBackfillHours: row.member_backfill_hours,
     hostBackfillHours: row.host_backfill_hours,
+    enableSessionIntents: row.enable_session_intents ?? false,
   };
 }
 
@@ -119,7 +122,7 @@ function mapSettings(row: ClubRow): ClubSettings {
 
 async function fetchClubRow(clubId: string): Promise<ClubRow> {
   const result = await pool.query<ClubRow>(
-    `SELECT id, name, join_code, allow_member_backfill, member_backfill_hours, host_backfill_hours
+    `SELECT id, name, join_code, allow_member_backfill, member_backfill_hours, host_backfill_hours, enable_session_intents
      FROM clubs WHERE id = $1 LIMIT 1`,
     [clubId]
   );
@@ -158,6 +161,10 @@ export async function updateClubSettings(
   if (settings.hostBackfillHours !== undefined) {
     updates.push(`host_backfill_hours = $${idx++}`);
     values.push(settings.hostBackfillHours);
+  }
+  if (settings.enableSessionIntents !== undefined) {
+    updates.push(`enable_session_intents = $${idx++}`);
+    values.push(settings.enableSessionIntents);
   }
 
   if (updates.length === 0) {
