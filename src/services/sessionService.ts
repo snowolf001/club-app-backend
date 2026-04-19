@@ -225,7 +225,7 @@ export async function createSession(params: {
   }
 
   // ─── Capacity Pro gate ────────────────────────────────────────────────────
-  if (typeof capacity === 'number' && capacity > 0) {
+  if ((capacity ?? 0) > 0) {
     const proStatus = await getClubProStatus(clubId);
     if (!proStatus.isPro) {
       throw new AppError(
@@ -246,7 +246,7 @@ export async function createSession(params: {
      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
     [
       clubId,
-      title != null ? title.trim() : null,
+      title?.trim() || null,
       locationId,
       startTime,
       endTime ?? null,
