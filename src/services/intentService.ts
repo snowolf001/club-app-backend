@@ -122,12 +122,15 @@ export async function getSessionIntentSummary(
     return { enabled: false, count: 0, currentMemberGoing: false, members: [] };
   }
 
+  // Always fetch real intent data so Session Detail is consistent with
+  // the going_count shown on session list cards. The `enabled` flag only
+  // controls whether members can set/change their intent (button visibility).
   const rows = await pool.query<IntentRow>(
     `SELECT si.membership_id,
             m.display_name,
             u.name AS user_name
      FROM session_intents si
-     JOIN memberships m ON m.id = si.membership_id AND m.status = 'active'
+     JOIN memberships m ON m.id = si.membership_id
      JOIN users u       ON u.id = m.user_id
      WHERE si.session_id = $1
      ORDER BY si.created_at`,
@@ -144,7 +147,7 @@ export async function getSessionIntentSummary(
   );
 
   return {
-    enabled: true,
+    enabled,
     count: members.length,
     currentMemberGoing,
     members,
