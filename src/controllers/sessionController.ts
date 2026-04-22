@@ -271,12 +271,24 @@ export async function createSessionHandler(
       throw new AppError(400, 'INVALID_START_TIME', 'startTime is required.');
     }
 
+    if (typeof endTime !== 'string' || !endTime) {
+      throw new AppError(400, 'INVALID_END_TIME', 'endTime is required.');
+    }
+
+    if (endTime <= startTime) {
+      throw new AppError(
+        400,
+        'INVALID_END_TIME',
+        'endTime must be after startTime.'
+      );
+    }
+
     const session = await createSession({
       clubId,
       title: typeof title === 'string' ? title.trim() : null,
       locationId,
       startTime,
-      endTime: typeof endTime === 'string' ? endTime : null,
+      endTime,
       capacity:
         typeof capacity === 'number' &&
         Number.isInteger(capacity) &&

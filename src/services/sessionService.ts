@@ -9,7 +9,7 @@ type SessionRow = {
   club_id: string;
   title: string | null;
   starts_at: string;
-  ends_at: string | null;
+  ends_at: string;
   created_at: string;
   location_id: string | null;
   location_name: string | null;
@@ -37,7 +37,7 @@ export type SessionItem = {
   clubId: string;
   title: string | null;
   startTime: string;
-  endTime: string | null;
+  endTime: string;
   createdAt: string;
   locationId: string | null;
   locationName: string | null;
@@ -203,7 +203,7 @@ export async function createSession(params: {
   title?: string | null;
   locationId: string;
   startTime: string;
-  endTime?: string | null;
+  endTime: string;
   capacity?: number | null;
   hostMembershipId?: string | null;
 }): Promise<SessionItem> {
@@ -265,7 +265,7 @@ export async function createSession(params: {
       title?.trim() || null,
       locationId,
       startTime,
-      endTime ?? null,
+      endTime,
       capacity ?? null,
       hostMembershipId ?? null,
     ]
