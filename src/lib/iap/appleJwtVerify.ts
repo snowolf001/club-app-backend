@@ -37,10 +37,10 @@ import crypto from 'node:crypto';
 // ─── Pinned Apple Root CA G3 ─────────────────────────────────────────────────
 //
 // Apple Root CA - G3 (EC P-384, self-signed)
-// Source:      https://www.apple.com/certificateauthority/
+// Source:      https://www.apple.com/certificateauthority/AppleRootCA-G3.cer
 // Validity:    2014-04-30 to 2039-04-30
-// SHA-256 FP:  63:34:3A:BF:B8:9A:6A:03:EB:BE:7F:71:A8:A2:08:9B:
-//              6C:07:47:A4:EF:C7:5E:5C:96:A8:C6:13:5E:00:1A:87
+// SHA-256 FP:  63:34:3A:BF:B8:9A:6A:03:EB:B5:7E:9B:3F:5F:A7:BE:
+//              7C:4F:5C:75:6F:30:17:B3:A8:C4:88:C3:65:3E:91:79
 //
 // This certificate is pinned here so we can verify the x5c chain without
 // network calls. If Apple rotates their root (extremely unlikely before 2039),
@@ -56,13 +56,13 @@ IEF1dGhvcml0eTETMBEGA1UECgwKQXBwbGUgSW5jLjELMAkGA1UEBhMCVVMwHhcN
 MTQwNDMwMTgxOTA2WhcNMzkwNDMwMTgxOTA2WjBnMRswGQYDVQQDDBJBcHBsZSBS
 b290IENBIC0gRzMxJjAkBgNVBAsMHUFwcGxlIENlcnRpZmljYXRpb24gQXV0aG9y
 aXR5MRMwEQYDVQQKDApBcHBsZSBJbmMuMQswCQYDVQQGEwJVUzB2MBAGByqGSM49
-AgEGBSuBBAAiA2IABJjpLz1AcqTtkyJygnnkNkA0KiOmhDblkM4hGEuB2XuG6eOA
-YbKIe7EVS5FFBY7KXFa8pTkIPMCRnEQK/tQvbQbKLXCGxOJnFnK1YkR4GRpFvhE0
-KK6wR3MCvhZDqJqjZjBkMB0GA1UdDgQWBBS7sRelCqhv+c4/a5GR32pmkclDeTAf
-BgNVHSMEGDAWgBS7sRelCqhv+c4/a5GR32pmkclDeTASBgNVHRMBAf8ECDAGAQH/
-AgEBMA4GA1UdDwEB/wQEAwIBBjAKBggqhkjOPQQDAwNoADBlAjEA2T+r7yd/a4Fj
-CrkUeSl4wr5ugctXrfwNiWp1/gaKStrKkGjpYgH3gy3d2R0ULFhEAjADpMf2BVTR
-AVZB1O0Lp7glZ3i+RGq4bgw7PgIvhSzEdEEfXfKLWJ/NeL+VD5bA4w==
+AgEGBSuBBAAiA2IABJjpLz1AcqTtkyJygRMc3RCV8cWjTnHcFBbZDuWmBSp3ZHtf
+TjjTuxxEtX/1H7YyYl3J6YRbTzBPEVoA/VhYDKX1DyxNB0cTddqXl5dvMVztK517
+IDvYuVTZXpmkOlEKMaNCMEAwHQYDVR0OBBYEFLuw3qFYM4iapIqZ3r6966/ayySr
+MA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMDA2gA
+MGUCMQCD6cHEFl4aXTQY2e3v9GwOAEZLuN+yRhHFD/3meoyhpmvOwgPUnPWTxnS4
+at+qIxUCMG1mihDK1A3UT82NQz60imOlM27jbdoXt2QfyFMm+YhidDkLF1vLUagM
+6BgD56KyKA==
 -----END CERTIFICATE-----`;
 
 // Only ES256 is used by Apple. Reject anything else.
@@ -215,7 +215,17 @@ function verifyCertChain(x5c: string[]): crypto.KeyObject {
  * Apple JWT verification will throw, so this also serves as an early signal.
  */
 export function logAppleRootCaExpiry(): void {
-  const cert = getPinnedAppleRootCert();
+  let cert: crypto.X509Certificate;
+  try {
+    cert = getPinnedAppleRootCert();
+  } catch (err) {
+    console.error(
+      '[apple-ca] CRITICAL: failed to parse pinned Apple Root CA G3 PEM. ' +
+        'All Apple JWT verification will fail. Error: ' +
+        (err instanceof Error ? err.message : String(err))
+    );
+    return;
+  }
   const expiresAt = new Date(cert.validTo);
   const nowMs = Date.now();
   const daysUntilExpiry = Math.floor(
