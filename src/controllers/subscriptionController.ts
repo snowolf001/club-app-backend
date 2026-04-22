@@ -13,6 +13,7 @@ import {
   SubscriptionRecord,
   ClubProStatus,
 } from '../services/subscriptionService';
+import { processAppleNotification } from '../services/appleNotificationService';
 
 export type ClubSubscriptionStatusDto = {
   isPro: boolean;
@@ -60,9 +61,7 @@ function toSubscriptionDto(
     expiresAt: sub.endsAt ? sub.endsAt.toISOString() : null,
     status: sub.status,
     productId: sub.productId ?? null,
-    // autoRenews is not stored in DB yet — return null for forward-compat.
-    // When webhook data is enriched, populate from verification_payload.
-    autoRenews: null,
+    autoRenews: sub.autoRenews,
   };
 }
 
@@ -88,7 +87,11 @@ function deriveBillingState(
   if (!active) {
     return lastExpired ? 'expired' : 'free';
   }
-  // autoRenews not stored — treat as renewing by default
+  // 'canceled' DB status = still active within entitlement window, but auto-renew is off
+  // autoRenews === false also covers cases where webhook updated the flag but not the status
+  if (active.status === 'canceled' || active.autoRenews === false) {
+    return 'active_cancelled';
+  }
   return 'active_renewing';
 }
 
@@ -433,13 +436,36 @@ export async function appleWebhookHandler(
   res: Response,
   next: NextFunction
 ): Promise<void> {
+  // Always return 200 to prevent Apple from retrying failed deliveries.
+  // Processing failures are logged and written to system_events.
   try {
-    logger.info('[subscription] appleWebhook received', {
-      notificationType: req.body?.notificationType,
-    });
-    res.json({ success: true });
+    await processAppleNotification(req.body);
+    res.status(200).json({ ok: true });
   } catch (err) {
-    next(err);
+    const msg = err instanceof Error ? err.message : String(err);
+
+    // JWT verification failures mean the payload was forged or malformed.
+    // Treat these as auth-level rejections — log at warn (not error) and
+    // do NOT write a system_event (avoids pollution from probe traffic).
+    const isJwtAuthError =
+      err instanceof Error && err.message.startsWith('Apple JWT verification failed');
+
+    if (isJwtAuthError) {
+      logger.warn('[subscription] appleWebhook JWT auth rejection', { error: msg });
+    } else {
+      logger.error('[subscription] appleWebhook processing failed', { error: msg });
+
+      void recordSystemEvent({
+        category: 'webhook',
+        event_type: 'webhook_failed',
+        event_status: 'failure',
+        platform: 'ios',
+        message: msg,
+      });
+    }
+
+    // Return 200 so Apple does not retry — failure is captured in logs/system_events.
+    res.status(200).json({ ok: true });
   }
 }
 

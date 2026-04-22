@@ -10,9 +10,8 @@ const router = Router();
 // Provider webhooks (public — no apiKeyAuth)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ⚠️ TODO (MUST before production):
-// - Apple: verify App Store Server Notification JWT signature
-// - Google: verify Pub/Sub message authenticity / source
+// Apple: JWT signature verified inside appleWebhookHandler via appleJwtVerify.ts
+// Google: PubSub JWT verified inside googlePlayWebhookHandler at /api/webhooks/google-play
 
 router.post('/subscriptions/webhooks/apple', appleWebhookHandler);
 router.post('/subscriptions/webhooks/google', googleWebhookHandler);

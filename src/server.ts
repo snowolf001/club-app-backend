@@ -4,6 +4,7 @@ import { pool } from './db/pool';
 import { runMigrations } from './db/migrate';
 import { startSystemEventsCleanupJob } from './jobs/systemEventsCleanup';
 import { startSessionIntentsCleanupJob } from './jobs/sessionIntentsCleanup';
+import { logAppleRootCaExpiry } from './lib/iap/appleJwtVerify';
 
 const port = Number(process.env.PORT || 3000);
 
@@ -13,6 +14,10 @@ async function start(): Promise<void> {
     console.log('[db] Database connection successful.');
 
     await runMigrations(pool);
+
+    // Verify the pinned Apple Root CA is still within its validity window.
+    // Logs WARN if expiry is within 365 days, ERROR if already expired.
+    logAppleRootCaExpiry();
 
     app.listen(port, () => {
       console.log(`[server] Club App backend listening on port ${port}`);

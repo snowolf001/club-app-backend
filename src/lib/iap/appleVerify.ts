@@ -37,6 +37,15 @@ interface AppleVerifyReceiptItem {
   cancellation_date_ms?: string;
 }
 
+interface ApplePendingRenewalInfo {
+  auto_renew_status?: string; // '0' = off, '1' = on
+  auto_renew_product_id?: string;
+  original_transaction_id?: string;
+  product_id?: string;
+  expiration_intent?: string;
+  is_in_billing_retry_period?: string;
+}
+
 interface AppleVerifyReceiptResponse {
   status: number;
   environment?: 'Production' | 'Sandbox' | string;
@@ -45,7 +54,7 @@ interface AppleVerifyReceiptResponse {
     in_app?: AppleVerifyReceiptItem[];
   };
   latest_receipt?: string;
-  pending_renewal_info?: unknown[];
+  pending_renewal_info?: ApplePendingRenewalInfo[];
   [key: string]: unknown;
 }
 
@@ -232,6 +241,16 @@ export async function verifyApplePurchase(
       };
     }
 
+    // Extract auto-renew status from pending_renewal_info for the matched transaction
+    const pendingRenewals = verifyResponse.pending_renewal_info ?? [];
+    const pendingForMatch = pendingRenewals.find(
+      (p) => p.original_transaction_id === matched.original_transaction_id
+    );
+    const autoRenewEnabled =
+      pendingForMatch?.auto_renew_status !== undefined
+        ? pendingForMatch.auto_renew_status === '1'
+        : undefined;
+
     return {
       valid: true,
       productId: matched.product_id ?? input.productId,
@@ -239,6 +258,7 @@ export async function verifyApplePurchase(
       originalTransactionId: matched.original_transaction_id,
       purchaseDateMs: toMs(matched.purchase_date_ms) ?? undefined,
       expiresAtMs: toMs(matched.expires_date_ms) ?? undefined,
+      autoRenewEnabled,
       raw: verifyResponse,
     };
   } catch (error) {

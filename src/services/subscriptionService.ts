@@ -109,6 +109,7 @@ export interface SubscriptionRecord {
   originalTransactionId: string | null;
   purchaseToken: string | null;
   orderId: string | null;
+  autoRenews: boolean | null;
   createdAt: Date;
 }
 
@@ -205,6 +206,7 @@ function rowToRecord(row: Record<string, unknown>): SubscriptionRecord {
       (row.original_transaction_id as string | null) ?? null,
     purchaseToken: (row.purchase_token as string | null) ?? null,
     orderId: (row.order_id as string | null) ?? null,
+    autoRenews: typeof row.auto_renews === 'boolean' ? row.auto_renews : null,
     createdAt: new Date(row.created_at as string),
   };
 }
@@ -301,11 +303,19 @@ async function findExistingSubscriptionByVerifiedIds(
     }
   }
 
-  if (originalTransactionId && !transactionId) {
+  if (originalTransactionId) {
+    // Always check by originalTransactionId — regardless of whether transactionId
+    // is also provided. iOS renewals carry a new transactionId but the same
+    // originalTransactionId, so we must match on OT to prevent duplicate rows.
+    //
+    // Exclude 'expired' rows: an expired row + a valid Apple receipt means the
+    // subscription was renewed (webhook may have missed it) or reactivated.
+    // A new row should be created so the club regains Pro status correctly.
     const r = await client.query(
       `SELECT *
          FROM club_subscriptions
         WHERE original_transaction_id = $1
+          AND status NOT IN ('expired')
         ORDER BY created_at DESC
         LIMIT 1`,
       [originalTransactionId]
@@ -604,10 +614,16 @@ export async function createOrScheduleSubscriptionForClub(
   // 1) Actor must belong to the club
   await assertUserBelongsToClub(actorMemberId, clubId);
 
-  // 2) Fast-path idempotency checks before provider call
+  // 2) Fast-path idempotency checks before provider call.
+  //
+  // Only check by exact identifiers (transactionId, purchaseToken) at this stage.
+  // The originalTransactionId check is intentionally deferred to the post-verify
+  // in-transaction step so that iOS renewals (new transactionId, same
+  // originalTransactionId) still go through Apple verification before we return
+  // an idempotent result. This ensures we never skip Apple verify for renewals.
   const fastExisting = await findExistingSubscriptionByVerifiedIds(clubId, {
     transactionId,
-    originalTransactionId,
+    originalTransactionId: null, // deferred to post-verify
     purchaseToken,
   });
 
@@ -776,8 +792,9 @@ export async function createOrScheduleSubscriptionForClub(
           receipt_data,
           purchase_token,
           order_id,
+          auto_renews,
           verification_payload)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        RETURNING *`,
       [
         clubId,
@@ -793,6 +810,7 @@ export async function createOrScheduleSubscriptionForClub(
         platform === 'ios' ? (receiptData ?? null) : null,
         finalPurchaseToken,
         finalOrderId,
+        verifyResult.autoRenewEnabled ?? null,
         verificationPayload ?? null,
       ]
     );

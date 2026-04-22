@@ -27,6 +27,9 @@ export interface IapVerifyResult {
   /** Subscription expiration time (ms) — CRITICAL */
   expiresAtMs?: number;
 
+  /** iOS: whether auto-renew is currently enabled */
+  autoRenewEnabled?: boolean;
+
   /** Raw provider response for storage / debugging */
   raw?: unknown;
 

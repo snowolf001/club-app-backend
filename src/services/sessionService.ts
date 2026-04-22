@@ -17,6 +17,8 @@ type SessionRow = {
   status: 'active' | 'closed';
   host_membership_id: string | null;
   host_display_name: string | null;
+  checked_in_count: string;
+  going_count: string;
 };
 
 type CheckedInRow = {
@@ -41,6 +43,8 @@ export type SessionItem = {
   locationName: string | null;
   capacity: number | null;
   status: 'active' | 'closed';
+  checkedInCount: number;
+  goingCount: number;
   host: { membershipId: string; displayName: string } | null;
 };
 
@@ -67,6 +71,8 @@ function mapSessionRow(row: SessionRow): SessionItem {
     locationName: row.location_name,
     capacity: row.capacity,
     status: row.status,
+    checkedInCount: parseInt(row.checked_in_count, 10),
+    goingCount: parseInt(row.going_count, 10),
     host: row.host_membership_id
       ? {
           membershipId: row.host_membership_id,
@@ -79,10 +85,18 @@ function mapSessionRow(row: SessionRow): SessionItem {
 const SESSION_SELECT = `
   SELECT s.id, s.club_id, s.title, s.starts_at, s.ends_at, s.created_at,
          s.location_id, cl.name AS location_name, s.capacity, s.status,
-         s.host_membership_id, hm.display_name AS host_display_name
+         s.host_membership_id, hm.display_name AS host_display_name,
+         COUNT(DISTINCT a.id) AS checked_in_count,
+         COUNT(DISTINCT si.membership_id) AS going_count
   FROM sessions s
   LEFT JOIN club_locations cl ON cl.id = s.location_id
   LEFT JOIN memberships hm ON hm.id = s.host_membership_id
+  LEFT JOIN attendances a ON a.session_id = s.id
+  LEFT JOIN session_intents si ON si.session_id = s.id
+`;
+
+const SESSION_GROUP_BY = `
+  GROUP BY s.id, cl.name, hm.display_name
 `;
 
 // ─── Exported functions ───────────────────────────────────────────────────────
@@ -93,6 +107,7 @@ export async function getSessionsByClub(
   const result = await pool.query<SessionRow>(
     `${SESSION_SELECT}
      WHERE s.club_id = $1
+     ${SESSION_GROUP_BY}
      ORDER BY s.starts_at ASC`,
     [clubId]
   );
@@ -104,6 +119,7 @@ export async function getSessionById(sessionId: string): Promise<SessionItem> {
   const result = await pool.query<SessionRow>(
     `${SESSION_SELECT}
      WHERE s.id = $1
+     ${SESSION_GROUP_BY}
      LIMIT 1`,
     [sessionId]
   );
