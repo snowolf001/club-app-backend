@@ -15,7 +15,8 @@ export const IAP_PRODUCTS: Record<Platform, Record<PlanCycle, string>> = {
 
 const PRODUCT_TO_CYCLE: Record<string, PlanCycle> = {
   passeo_pro_monthly: 'monthly',
-  Passeo_pro_yearly: 'yearly',
+  passeo_pro_yearly: 'yearly',   // Android
+  Passeo_pro_yearly: 'yearly',   // iOS (App Store Connect product ID)
 };
 
 export function getPlanCycleFromProductId(productId: string): PlanCycle | null {

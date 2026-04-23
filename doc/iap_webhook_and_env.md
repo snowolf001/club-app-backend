@@ -3,7 +3,7 @@
 ## iOS (Apple)
 
 - **Webhook URL**
-  - 生产环境: `https://club-app-backend-production.up.railway.app/subscriptions/webhooks/apple`
+  - 生产环境: `https://club-app-backend-production.up.railway.app/api/subscriptions/webhooks/apple`
   - 配置位置: App Store Connect → App 信息 → App Store Server Notifications
 
 - **环境变量**
@@ -16,7 +16,7 @@
 ## Android (Google)
 
 - **Webhook URL**
-  - 生产环境: `https://club-app-backend-production.up.railway.app/subscriptions/webhooks/google`
+  - 生产环境: `https://club-app-backend-production.up.railway.app/api/subscriptions/webhooks/google`
   - 配置位置: Google Play Console → Monetization setup → Real-time developer notifications
 
 - **环境变量**
