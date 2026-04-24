@@ -269,11 +269,14 @@ function calculateClubEntitlementWindow(
     status = 'active';
   }
 
-  // If active, use provider expiry. If scheduled, add interval to defer starts_at.
-  const endsAt =
-    status === 'active' && providerEndsAt
-      ? providerEndsAt
-      : addPlanInterval(startsAt, plan);
+  // If active, use provider expiry — but only if it's still in the future.
+  // If providerEndsAt is already past (e.g. sandbox timing delay), fall back to
+  // addPlanInterval so the subscription is not immediately expired on creation.
+  const useProviderEndsAt =
+    status === 'active' && providerEndsAt != null && providerEndsAt > now;
+  const endsAt = useProviderEndsAt
+    ? providerEndsAt!
+    : addPlanInterval(startsAt, plan);
 
   return { startsAt, endsAt, status };
 }
@@ -294,6 +297,7 @@ async function findExistingSubscriptionByVerifiedIds(
       `SELECT *
          FROM club_subscriptions
         WHERE transaction_id = $1
+          AND status NOT IN ('expired')
         LIMIT 1`,
       [transactionId]
     );
@@ -776,7 +780,8 @@ export async function createOrScheduleSubscriptionForClub(
       providerEndsAt
     );
 
-    // 6) Insert subscription
+    // 6) Insert subscription (UPSERT: re-verification of an expired row with the same
+    //    transaction_id updates it in-place instead of hitting the unique constraint)
     const insert = await client.query(
       `INSERT INTO club_subscriptions
          (club_id,
@@ -795,6 +800,14 @@ export async function createOrScheduleSubscriptionForClub(
           auto_renews,
           verification_payload)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       ON CONFLICT (transaction_id) WHERE transaction_id IS NOT NULL
+       DO UPDATE SET
+         status       = EXCLUDED.status,
+         starts_at    = EXCLUDED.starts_at,
+         ends_at      = EXCLUDED.ends_at,
+         auto_renews  = EXCLUDED.auto_renews,
+         receipt_data = EXCLUDED.receipt_data,
+         updated_at   = NOW()
        RETURNING *`,
       [
         clubId,
