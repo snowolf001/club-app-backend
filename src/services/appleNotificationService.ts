@@ -47,6 +47,7 @@ import { logger } from '../lib/logger';
 import { recordSystemEvent } from '../lib/systemEvents';
 import { refreshClubSubscriptionStatuses } from './subscriptionService';
 import { verifyAndDecodeAppleJwt } from '../lib/iap/appleJwtVerify';
+import { getPlanCycleFromProductId } from '../utils/iapProducts';
 
 // ─── Apple notification payload types ────────────────────────────────────────
 
@@ -187,10 +188,10 @@ async function insertAppleWebhookEvent(params: {
  */
 async function findSubscriptionByOriginalTransactionId(
   originalTransactionId: string
-): Promise<{ id: string; clubId: string; status: string } | null> {
+): Promise<{ id: string; clubId: string; status: string; productId: string } | null> {
   const result = await db.query(
     `
-    SELECT id, club_id, status
+    SELECT id, club_id, status, product_id
       FROM club_subscriptions
      WHERE platform = 'ios'
        AND original_transaction_id = $1
@@ -206,9 +207,10 @@ async function findSubscriptionByOriginalTransactionId(
     id: string;
     club_id: string;
     status: string;
+    product_id: string;
   };
 
-  return { id: row.id, clubId: row.club_id, status: row.status };
+  return { id: row.id, clubId: row.club_id, status: row.status, productId: row.product_id };
 }
 
 // ─── Lifecycle update helpers ─────────────────────────────────────────────────
@@ -295,6 +297,10 @@ async function handleRenewal(
     autoRenewStatus: renewalInfo?.autoRenewStatus ?? null,
   };
 
+  // If the product changed (e.g. monthly → yearly after a plan switch), update product_id and plan.
+  const newPlan = getPlanCycleFromProductId(productId);
+  const productChanged = productId !== existing.productId;
+
   await db.query(
     `
     UPDATE club_subscriptions
@@ -302,6 +308,8 @@ async function handleRenewal(
            ends_at = COALESCE($1, ends_at),
            auto_renews = $2,
            verification_payload = $3::jsonb,
+           product_id = $5,
+           plan = COALESCE($6, plan),
            updated_at = NOW()
      WHERE id = $4
     `,
@@ -310,8 +318,19 @@ async function handleRenewal(
       autoRenews,
       JSON.stringify(mergedPayload),
       existing.id,
+      productId,
+      newPlan,
     ]
   );
+
+  if (productChanged) {
+    logger.info('[apple-webhook] DID_RENEW: product changed', {
+      subscriptionId: existing.id,
+      oldProductId: existing.productId,
+      newProductId: productId,
+      newPlan,
+    });
+  }
 
   logger.info('[apple-webhook] DID_RENEW: subscription extended', {
     subscriptionId: existing.id,
