@@ -251,16 +251,24 @@ async function handleRenewal(
     return;
   }
 
-  // Guard: do not reactivate a subscription that has already been marked expired.
-  // A DID_RENEW may arrive late (e.g., after a backend outage or Apple retry delay)
-  // for a renewal period that has itself since passed. Applying it would silently
-  // flip an expired row back to active with a stale ends_at in the past.
-  // The new renewal period will have its own row (created via /verify or SUBSCRIBED).
-  if (existing.status === 'expired') {
-    logger.warn('[apple-webhook] DID_RENEW: subscription already expired, skipping reactivation', {
+  const newEndsAt = txInfo.expiresDate ? new Date(txInfo.expiresDate) : null;
+
+  // Guard: skip late-arriving DID_RENEW notifications whose renewal period has
+  // already itself expired. This prevents silently flipping a row back to active
+  // with a stale ends_at in the past after a backend outage or Apple retry delay.
+  //
+  // We check newEndsAt instead of existing.status because:
+  //   a) Status may already be 'expired' if Apple sent EXPIRED before DID_RENEW
+  //      (can happen during product changes, e.g. monthly → yearly). In that case
+  //      the DID_RENEW is still valid and must be applied.
+  //   b) A genuinely late notification (for an already-elapsed renewal period)
+  //      will have newEndsAt in the past regardless of the local status.
+  if (newEndsAt && newEndsAt <= new Date()) {
+    logger.warn('[apple-webhook] DID_RENEW: renewal period already in the past, skipping', {
       subscriptionId: existing.id,
       originalTransactionId,
       transactionId,
+      newEndsAt: newEndsAt.toISOString(),
     });
     void recordSystemEvent({
       category: 'webhook',
@@ -271,12 +279,11 @@ async function handleRenewal(
       transaction_id: transactionId,
       original_transaction_id: originalTransactionId,
       related_subscription_id: existing.id,
-      message: 'DID_RENEW: skipped — subscription already expired',
+      message: 'DID_RENEW: skipped — newEndsAt is in the past (late notification)',
+      details: { newEndsAt: newEndsAt.toISOString() },
     });
     return;
   }
-
-  const newEndsAt = txInfo.expiresDate ? new Date(txInfo.expiresDate) : null;
   const autoRenews =
     renewalInfo?.autoRenewStatus !== undefined
       ? renewalInfo.autoRenewStatus === 1
