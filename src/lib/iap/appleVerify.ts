@@ -20,6 +20,7 @@
  */
 
 import { IapVerifyResult } from './types';
+import { logger } from '../logger';
 
 export interface AppleVerifyInput {
   productId: string;
@@ -154,11 +155,37 @@ export async function verifyApplePurchase(
   input: AppleVerifyInput
 ): Promise<IapVerifyResult> {
   if (process.env.IAP_MOCK_ENABLED === 'true') {
+    // Block mock mode in production — real Apple verification is required.
+    if (process.env.NODE_ENV === 'production') {
+      logger.error(
+        '[apple-verify] IAP_MOCK_ENABLED=true detected in production — refusing to grant Pro without real verification',
+        { productId: input.productId, transactionId: input.transactionId ?? null }
+      );
+      return {
+        valid: false,
+        productId: input.productId,
+        verificationMode: 'mock',
+        errorCode: 'IAP_MOCK_IN_PRODUCTION',
+        errorMessage:
+          'IAP_MOCK_ENABLED is not allowed in production — Apple verification is required',
+      };
+    }
+
     const mockTx = input.transactionId ?? `mock_tx_${Date.now()}`;
     const mockOrig = input.originalTransactionId ?? `mock_orig_${Date.now()}`;
 
+    logger.warn(
+      '[apple-verify] mock mode active — bypassing real Apple verification',
+      {
+        productId: input.productId,
+        transactionId: mockTx,
+        originalTransactionId: mockOrig,
+      }
+    );
+
     return {
       valid: true,
+      verificationMode: 'mock',
       productId: input.productId,
       transactionId: mockTx,
       originalTransactionId: mockOrig,
@@ -173,8 +200,23 @@ export async function verifyApplePurchase(
     if (!input.receiptData || !input.receiptData.trim()) {
       return {
         valid: false,
+        verificationMode: 'real',
         productId: input.productId,
         errorMessage: 'Missing Apple receiptData',
+      };
+    }
+
+    // If APPLE_SHARED_SECRET is not configured this is a server misconfiguration,
+    // not a client payment failure. Return a distinct error code so the service
+    // layer can respond with 503 instead of 402.
+    if (!process.env.APPLE_SHARED_SECRET) {
+      return {
+        valid: false,
+        verificationMode: 'real',
+        productId: input.productId,
+        errorCode: 'IOS_VERIFICATION_NOT_CONFIGURED',
+        errorMessage:
+          'APPLE_SHARED_SECRET is not configured — iOS verification is unavailable',
       };
     }
 
@@ -198,6 +240,7 @@ export async function verifyApplePurchase(
     if (verifyResponse.status !== 0) {
       return {
         valid: false,
+        verificationMode: 'real',
         productId: input.productId,
         errorMessage: `Apple receipt validation failed with status ${verifyResponse.status}`,
         raw: verifyResponse,
@@ -212,6 +255,7 @@ export async function verifyApplePurchase(
     if (items.length === 0) {
       return {
         valid: false,
+        verificationMode: 'real',
         productId: input.productId,
         errorMessage: 'Apple receipt validation returned no transactions',
         raw: verifyResponse,
@@ -223,6 +267,7 @@ export async function verifyApplePurchase(
     if (!matched) {
       return {
         valid: false,
+        verificationMode: 'real',
         productId: input.productId,
         errorMessage:
           'No matching Apple subscription transaction found for this product',
@@ -233,6 +278,7 @@ export async function verifyApplePurchase(
     if (matched.cancellation_date_ms) {
       return {
         valid: false,
+        verificationMode: 'real',
         productId: input.productId,
         transactionId: matched.transaction_id,
         originalTransactionId: matched.original_transaction_id,
@@ -253,6 +299,7 @@ export async function verifyApplePurchase(
 
     return {
       valid: true,
+      verificationMode: 'real',
       productId: matched.product_id ?? input.productId,
       transactionId: matched.transaction_id,
       originalTransactionId: matched.original_transaction_id,
@@ -264,6 +311,7 @@ export async function verifyApplePurchase(
   } catch (error) {
     return {
       valid: false,
+      verificationMode: 'real',
       productId: input.productId,
       errorMessage:
         error instanceof Error ? error.message : 'Unknown Apple verify error',

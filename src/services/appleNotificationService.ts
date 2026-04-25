@@ -700,6 +700,17 @@ export async function processAppleNotification(body: unknown): Promise<void> {
           notificationUUID,
           originalTransactionId: txInfo?.originalTransactionId ?? null,
         });
+        void recordSystemEvent({
+          category: 'webhook',
+          event_type: 'webhook_received',
+          event_status: 'info',
+          platform: 'ios',
+          product_id: txInfo?.productId ?? null,
+          transaction_id: txInfo?.transactionId ?? null,
+          original_transaction_id: txInfo?.originalTransactionId ?? null,
+          message: 'DID_FAIL_TO_RENEW: billing retry / grace period started',
+          details: { notificationType, subtype: subtype ?? null, notificationUUID },
+        });
         break;
 
       case 'SUBSCRIBED':
@@ -709,6 +720,17 @@ export async function processAppleNotification(body: unknown): Promise<void> {
           notificationUUID,
           subtype: subtype ?? null,
           originalTransactionId: txInfo?.originalTransactionId ?? null,
+        });
+        void recordSystemEvent({
+          category: 'webhook',
+          event_type: 'webhook_received',
+          event_status: 'info',
+          platform: 'ios',
+          product_id: txInfo?.productId ?? null,
+          transaction_id: txInfo?.transactionId ?? null,
+          original_transaction_id: txInfo?.originalTransactionId ?? null,
+          message: `SUBSCRIBED (${subtype ?? 'initial'}): row created via verify`,
+          details: { notificationType, subtype: subtype ?? null, notificationUUID },
         });
         break;
 
@@ -720,6 +742,17 @@ export async function processAppleNotification(body: unknown): Promise<void> {
           notificationUUID,
           subtype: subtype ?? null,
         });
+        void recordSystemEvent({
+          category: 'webhook',
+          event_type: 'webhook_received',
+          event_status: 'info',
+          platform: 'ios',
+          product_id: txInfo?.productId ?? null,
+          transaction_id: txInfo?.transactionId ?? null,
+          original_transaction_id: txInfo?.originalTransactionId ?? null,
+          message: `${notificationType} notification noted`,
+          details: { notificationType, subtype: subtype ?? null, notificationUUID },
+        });
         break;
 
       default:
@@ -728,6 +761,17 @@ export async function processAppleNotification(body: unknown): Promise<void> {
           notificationType,
           subtype: subtype ?? null,
           notificationUUID,
+        });
+        void recordSystemEvent({
+          category: 'webhook',
+          event_type: 'webhook_received',
+          event_status: 'info',
+          platform: 'ios',
+          product_id: txInfo?.productId ?? null,
+          transaction_id: txInfo?.transactionId ?? null,
+          original_transaction_id: txInfo?.originalTransactionId ?? null,
+          message: `unknown notificationType: ${notificationType}`,
+          details: { notificationType, subtype: subtype ?? null, notificationUUID },
         });
         break;
     }

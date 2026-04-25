@@ -632,6 +632,26 @@ export async function createOrScheduleSubscriptionForClub(
   });
 
   if (fastExisting) {
+    logger.info('[subscription] purchase idempotent (fast path)', {
+      clubId,
+      platform,
+      productId,
+      subscriptionId: fastExisting.id,
+    });
+    void recordSystemEvent({
+      category: 'subscription',
+      event_type: 'purchase_idempotent',
+      event_status: 'info',
+      club_id: clubId,
+      membership_id: actorMemberId,
+      platform,
+      product_id: productId,
+      purchase_token: purchaseToken ?? null,
+      transaction_id: transactionId ?? null,
+      original_transaction_id: originalTransactionId ?? null,
+      related_subscription_id: fastExisting.id,
+      message: 'purchase already exists — fast-path idempotent return',
+    });
     return { subscription: fastExisting, idempotent: true };
   }
 
@@ -647,11 +667,32 @@ export async function createOrScheduleSubscriptionForClub(
       );
     }
 
+    logger.info('[subscription] iOS verify call start', {
+      clubId,
+      platform,
+      productId,
+      transactionId: transactionId ?? null,
+      originalTransactionId: originalTransactionId ?? null,
+    });
+
     verifyResult = await verifyApplePurchase({
       productId,
       receiptData,
       transactionId,
       originalTransactionId,
+    });
+
+    logger.info('[subscription] iOS verify call result', {
+      clubId,
+      platform,
+      productId,
+      transactionId: verifyResult.transactionId ?? transactionId ?? null,
+      originalTransactionId:
+        verifyResult.originalTransactionId ?? originalTransactionId ?? null,
+      verificationMode: verifyResult.verificationMode ?? 'real',
+      appleVerificationSucceeded: verifyResult.valid,
+      errorCode: verifyResult.errorCode ?? null,
+      errorMessage: verifyResult.valid ? null : (verifyResult.errorMessage ?? null),
     });
   } else {
     if (!purchaseToken) {
@@ -662,10 +703,27 @@ export async function createOrScheduleSubscriptionForClub(
       );
     }
 
+    logger.info('[subscription] Android verify call start', {
+      clubId,
+      platform,
+      productId,
+      purchaseToken: purchaseToken.slice(-8),
+      orderId: orderId ?? null,
+    });
+
     verifyResult = await verifyGooglePurchase({
       productId,
       purchaseToken,
       orderId,
+    });
+
+    logger.info('[subscription] Android verify call result', {
+      clubId,
+      platform,
+      productId,
+      orderId: verifyResult.orderId ?? orderId ?? null,
+      androidVerificationSucceeded: verifyResult.valid,
+      errorMessage: verifyResult.valid ? null : (verifyResult.errorMessage ?? null),
     });
   }
 
@@ -685,7 +743,8 @@ export async function createOrScheduleSubscriptionForClub(
       message: verifyResult.errorMessage ?? 'verify returned invalid',
       details: {
         valid: false,
-        reason: 'VERIFY_RESULT_INVALID',
+        errorCode: verifyResult.errorCode ?? 'VERIFY_RESULT_INVALID',
+        verificationMode: verifyResult.verificationMode ?? 'real',
         providerState:
           verifyResult.raw &&
           typeof verifyResult.raw === 'object' &&
@@ -695,6 +754,23 @@ export async function createOrScheduleSubscriptionForClub(
             : null,
       },
     });
+
+    // Server misconfiguration errors: return 503 so the client knows
+    // this is not a payment problem and can surface a clear message.
+    if (verifyResult.errorCode === 'IOS_VERIFICATION_NOT_CONFIGURED') {
+      throw new AppError(
+        503,
+        'IOS_VERIFICATION_NOT_CONFIGURED',
+        'iOS in-app purchase verification is not configured on this server'
+      );
+    }
+    if (verifyResult.errorCode === 'IAP_MOCK_IN_PRODUCTION') {
+      throw new AppError(
+        503,
+        'IAP_MOCK_IN_PRODUCTION',
+        'IAP mock mode is not allowed in production — contact the server operator'
+      );
+    }
 
     throw new AppError(
       402,
@@ -718,6 +794,44 @@ export async function createOrScheduleSubscriptionForClub(
   const providerEndsAt = verifyResult.expiresAtMs
     ? new Date(verifyResult.expiresAtMs)
     : null;
+
+  // Build the stored verification payload.
+  // The `_iapVerification` key embeds the verification mode so DB rows can be
+  // audited (e.g. queried for `verification_payload->>'_iapVerification'`).
+  // Mock-verified rows will have `verificationMode: 'mock'` here.
+  const storedPayload = {
+    ...(typeof verificationPayload === 'object' && verificationPayload !== null
+      ? (verificationPayload as object)
+      : {}),
+    _iapVerification: {
+      verificationMode: verifyResult.verificationMode ?? 'real',
+      platform,
+      productId: verifyResult.productId,
+      transactionId: finalTransactionId,
+      originalTransactionId: finalOriginalTransactionId,
+    },
+  };
+
+  // Record verification success in system_events before opening the DB transaction.
+  void recordSystemEvent({
+    category: 'subscription',
+    event_type: 'verify_success',
+    event_status: 'success',
+    club_id: clubId,
+    membership_id: actorMemberId,
+    platform,
+    product_id: verifyResult.productId ?? productId,
+    purchase_token: finalPurchaseToken,
+    transaction_id: finalTransactionId,
+    original_transaction_id: finalOriginalTransactionId,
+    order_id: finalOrderId,
+    message: `${platform} IAP verification succeeded`,
+    details: {
+      verificationMode: verifyResult.verificationMode ?? 'real',
+      expiresAt: providerEndsAt?.toISOString() ?? null,
+      autoRenewEnabled: verifyResult.autoRenewEnabled ?? null,
+    },
+  });
 
   const client = (await db.connect()) as TransactionalClient;
 
@@ -749,6 +863,26 @@ export async function createOrScheduleSubscriptionForClub(
 
     if (existing) {
       await client.query('COMMIT');
+      logger.info('[subscription] purchase idempotent (in-txn)', {
+        clubId,
+        platform,
+        productId,
+        subscriptionId: existing.id,
+      });
+      void recordSystemEvent({
+        category: 'subscription',
+        event_type: 'purchase_idempotent',
+        event_status: 'info',
+        club_id: clubId,
+        membership_id: actorMemberId,
+        platform,
+        product_id: productId,
+        purchase_token: finalPurchaseToken,
+        transaction_id: finalTransactionId,
+        original_transaction_id: finalOriginalTransactionId,
+        related_subscription_id: existing.id,
+        message: 'purchase already exists — in-txn idempotent return',
+      });
       return { subscription: existing, idempotent: true };
     }
 
@@ -824,7 +958,7 @@ export async function createOrScheduleSubscriptionForClub(
         finalPurchaseToken,
         finalOrderId,
         verifyResult.autoRenewEnabled ?? null,
-        verificationPayload ?? null,
+        storedPayload,
       ]
     );
 

@@ -35,4 +35,18 @@ export interface IapVerifyResult {
 
   /** Human-readable error when valid === false */
   errorMessage?: string;
+
+  /**
+   * Structured error code when valid === false.
+   * 'IOS_VERIFICATION_NOT_CONFIGURED' — APPLE_SHARED_SECRET env var is missing.
+   * 'IAP_MOCK_IN_PRODUCTION'          — IAP_MOCK_ENABLED=true detected in production.
+   */
+  errorCode?: string;
+
+  /**
+   * How the verification was performed.
+   * 'mock' — IAP_MOCK_ENABLED bypassed the real Apple call.
+   * 'real' — genuine Apple verifyReceipt call was made.
+   */
+  verificationMode?: 'mock' | 'real';
 }
