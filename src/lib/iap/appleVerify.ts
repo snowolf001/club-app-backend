@@ -82,15 +82,21 @@ function pickLatestValidItem(
   items: AppleVerifyReceiptItem[],
   input: AppleVerifyInput
 ): AppleVerifyReceiptItem | null {
-  const candidates = items.filter((item) => {
+  // First pass: try to find items that match both productId AND the provided IDs.
+  // The client-provided transactionId/originalTransactionId are hints to prefer
+  // a specific transaction, but they may belong to a *different* product (e.g.
+  // the client sends the old monthly transactionId when buying yearly). If no
+  // exact-ID match is found for the correct product, fall back to accepting any
+  // item with the correct productId so we don't reject a valid Apple receipt.
+  const exactCandidates = items.filter((item) => {
     if (item.product_id !== input.productId) return false;
 
-    // 优先精确匹配 transactionId
+    // Prefer exact transactionId match
     if (input.transactionId && item.transaction_id === input.transactionId) {
       return true;
     }
 
-    // 其次匹配 originalTransactionId
+    // Then originalTransactionId match
     if (
       input.originalTransactionId &&
       item.original_transaction_id === input.originalTransactionId
@@ -98,13 +104,21 @@ function pickLatestValidItem(
       return true;
     }
 
-    // 如果前端没传 id，就接受同 product 的记录
+    // If no IDs were provided, accept any item with the correct product
     if (!input.transactionId && !input.originalTransactionId) {
       return true;
     }
 
     return false;
   });
+
+  // Fallback: if no ID-matched items found, accept any item with the correct
+  // productId. This handles the case where the client sends a stale/wrong
+  // transactionId (e.g. from a previous subscription of a different plan).
+  const candidates =
+    exactCandidates.length > 0
+      ? exactCandidates
+      : items.filter((item) => item.product_id === input.productId);
 
   if (candidates.length === 0) {
     return null;
