@@ -249,6 +249,31 @@ async function handleRenewal(
     return;
   }
 
+  // Guard: do not reactivate a subscription that has already been marked expired.
+  // A DID_RENEW may arrive late (e.g., after a backend outage or Apple retry delay)
+  // for a renewal period that has itself since passed. Applying it would silently
+  // flip an expired row back to active with a stale ends_at in the past.
+  // The new renewal period will have its own row (created via /verify or SUBSCRIBED).
+  if (existing.status === 'expired') {
+    logger.warn('[apple-webhook] DID_RENEW: subscription already expired, skipping reactivation', {
+      subscriptionId: existing.id,
+      originalTransactionId,
+      transactionId,
+    });
+    void recordSystemEvent({
+      category: 'webhook',
+      event_type: 'webhook_skipped',
+      event_status: 'info',
+      platform: 'ios',
+      product_id: productId,
+      transaction_id: transactionId,
+      original_transaction_id: originalTransactionId,
+      related_subscription_id: existing.id,
+      message: 'DID_RENEW: skipped — subscription already expired',
+    });
+    return;
+  }
+
   const newEndsAt = txInfo.expiresDate ? new Date(txInfo.expiresDate) : null;
   const autoRenews =
     renewalInfo?.autoRenewStatus !== undefined
