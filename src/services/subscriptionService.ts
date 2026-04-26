@@ -238,6 +238,23 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 /**
+ * Returns true when a PostgreSQL unique violation is specifically on the
+ * idx_csub_one_active_per_club partial index, meaning a concurrent request
+ * slipped past the code-level guard and tried to insert a second active
+ * row for the same club.
+ */
+function isActiveClubSubscriptionConflict(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === '23505' &&
+    'constraint' in error &&
+    (error as { constraint?: unknown }).constraint === 'idx_csub_one_active_per_club'
+  );
+}
+
+/**
  * For this app, entitlement is club-level, not store-account-level.
  * We therefore derive the club entitlement window from the club plan chain:
  * - if a club already has active / scheduled time in the future, the new plan is queued
@@ -886,6 +903,68 @@ export async function createOrScheduleSubscriptionForClub(
       return { subscription: existing, idempotent: true };
     }
 
+    // 4.5) Club-level duplicate active subscription guard
+    //
+    // At this point we know this is a genuinely new purchase identity — step 4
+    // found no matching row. Before inserting, verify the club does not already
+    // have a currently-entitled subscription from a *different* identity.
+    //
+    // 'active'   = billing current and auto-renewing (or manually active)
+    // 'canceled' = user disabled auto-renew but entitlement window not yet over
+    //
+    // Both statuses represent unexpired Pro time, so both block a new purchase.
+    // Checking inside the transaction (after the clubs FOR UPDATE lock) prevents
+    // a race where two members purchase simultaneously.
+    {
+      const guardNow = new Date();
+      const conflictResult = await client.query(
+        `SELECT id
+           FROM club_subscriptions
+          WHERE club_id = $1
+            AND status IN ('active', 'canceled')
+            AND (starts_at IS NULL OR starts_at <= $2)
+            AND (ends_at IS NULL OR ends_at > $2)
+          LIMIT 1`,
+        [clubId, guardNow]
+      );
+
+      if (conflictResult.rows[0]) {
+        const conflictingId = conflictResult.rows[0].id as string;
+
+        logger.warn('[subscription] duplicate active subscription blocked', {
+          clubId,
+          actorMemberId,
+          platform,
+          productId,
+          conflictingSubscriptionId: conflictingId,
+        });
+
+        void recordSystemEvent({
+          category: 'subscription',
+          event_type: 'duplicate_active_subscription_blocked',
+          event_status: 'info',
+          club_id: clubId,
+          membership_id: actorMemberId,
+          platform,
+          plan,
+          product_id: productId,
+          transaction_id: finalTransactionId,
+          original_transaction_id: finalOriginalTransactionId,
+          purchase_token: finalPurchaseToken ?? null,
+          related_subscription_id: conflictingId,
+          message: 'purchase blocked — club already has an active Pro subscription',
+          details: { existingSubscriptionId: conflictingId },
+        });
+
+        throw new AppError(
+          409,
+          'CLUB_ALREADY_HAS_ACTIVE_SUBSCRIPTION',
+          'This club already has an active Pro subscription. No additional purchase is needed.',
+          { existingSubscriptionId: conflictingId }
+        );
+      }
+    }
+
     // 5) Refresh current statuses inside the same txn
     await refreshClubSubscriptionStatusesInTxn(clubId, client);
 
@@ -1014,6 +1093,41 @@ export async function createOrScheduleSubscriptionForClub(
   } catch (error) {
     await client.query('ROLLBACK');
 
+    // AppErrors are intentional responses (409, 402, 403, etc.) — rethrow
+    // immediately without fallback so they reach the error handler intact.
+    if (error instanceof AppError) {
+      throw error;
+    }
+
+    // A concurrent request slipped past the code-level guard and hit the
+    // idx_csub_one_active_per_club partial unique index — surface as 409.
+    if (isActiveClubSubscriptionConflict(error)) {
+      logger.warn('[subscription] race: duplicate active subscription via DB index', {
+        clubId,
+        platform,
+        productId,
+      });
+      void recordSystemEvent({
+        category: 'subscription',
+        event_type: 'duplicate_active_subscription_blocked',
+        event_status: 'info',
+        club_id: clubId,
+        membership_id: actorMemberId,
+        platform,
+        plan,
+        product_id: productId,
+        transaction_id: finalTransactionId,
+        original_transaction_id: finalOriginalTransactionId,
+        purchase_token: finalPurchaseToken ?? null,
+        message: 'purchase blocked by DB index — race condition prevented',
+      });
+      throw new AppError(
+        409,
+        'CLUB_ALREADY_HAS_ACTIVE_SUBSCRIPTION',
+        'This club already has an active Pro subscription. No additional purchase is needed.'
+      );
+    }
+
     if (process.env.NODE_ENV !== 'production') {
       logger.error(
         '[subscription] createOrScheduleSubscriptionForClub failed',
@@ -1031,18 +1145,9 @@ export async function createOrScheduleSubscriptionForClub(
       );
     }
 
-    // Graceful fallback for races on unique constraints or duplicate inserts
+    // Graceful fallback for unique constraint races on transaction_id /
+    // purchase_token — return idempotent rather than surfacing a 500.
     if (isUniqueViolation(error)) {
-      const existing = await findExistingSubscriptionByVerifiedIds(clubId, {
-        transactionId: finalTransactionId,
-        originalTransactionId: finalOriginalTransactionId,
-        purchaseToken: finalPurchaseToken,
-      });
-
-      if (existing) {
-        return { subscription: existing, idempotent: true };
-      }
-    } else {
       const existing = await findExistingSubscriptionByVerifiedIds(clubId, {
         transactionId: finalTransactionId,
         originalTransactionId: finalOriginalTransactionId,
