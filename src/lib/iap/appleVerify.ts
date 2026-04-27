@@ -321,7 +321,26 @@ export async function verifyApplePurchase(
         raw: verifyResponse,
       };
     }
-
+    // Reject expired subscriptions.
+    // Apple verifyReceipt returns status 0 even for expired subscriptions; the
+    // receipt is technically valid but the entitlement has ended.  If we do not
+    // check here the service layer will treat the apple-stated calendar expiry
+    // as a valid endsAt and create a brand-new active subscription row — giving
+    // the user free Pro access after their subscription already expired.
+    const expiresAtMs = toMs(matched.expires_date_ms);
+    if (expiresAtMs !== null && expiresAtMs < Date.now()) {
+      return {
+        valid: false,
+        verificationMode: 'real',
+        appleEnvironment: (verifyResponse.environment as 'Sandbox' | 'Production' | undefined) ?? undefined,
+        productId: matched.product_id ?? input.productId,
+        transactionId: matched.transaction_id,
+        originalTransactionId: matched.original_transaction_id,
+        errorCode: 'SUBSCRIPTION_EXPIRED',
+        errorMessage: 'Apple subscription has expired',
+        raw: verifyResponse,
+      };
+    }
     // Extract auto-renew status from pending_renewal_info for the matched transaction
     const pendingRenewals = verifyResponse.pending_renewal_info ?? [];
     const pendingForMatch = pendingRenewals.find(
