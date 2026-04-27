@@ -4,6 +4,7 @@ import { randomBytes, randomUUID } from 'crypto';
 import { writeAuditLog, createAuditLog } from './auditLogService';
 import { logger } from '../lib/logger';
 import { normalizeRole, isOwner, isOwnerOrHost } from '../lib/permissions';
+import { recordSystemEvent } from '../lib/systemEvents';
 
 function generateJoinCode(): string {
   return randomBytes(4).toString('hex').toUpperCase(); // 8 hex chars
@@ -418,24 +419,34 @@ export async function transferOwnership(
   actorMembershipId: string,
   targetMembershipId: string
 ): Promise<void> {
+  if (actorMembershipId === targetMembershipId) {
+    throw new AppError(400, 'INVALID_TARGET', 'Cannot transfer ownership to yourself.');
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    // Lock all memberships for this club to prevent concurrent transfers.
+    await client.query(
+      `SELECT id FROM memberships WHERE club_id = $1 FOR UPDATE`,
+      [clubId]
+    );
 
     const actorResult = await client.query<{
       id: string;
       role: string;
       user_id: string;
     }>(
-      `SELECT id, role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
-      [actorMembershipId]
+      `SELECT id, role, user_id FROM memberships WHERE id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+      [actorMembershipId, clubId]
     );
     const actor = actorResult.rows[0];
     if (!actor || !isOwner(normalizeRole(actor.role))) {
       throw new AppError(
         403,
-        'FORBIDDEN',
-        'Only the owner can transfer ownership.'
+        'NOT_OWNER',
+        'Only the club owner can transfer ownership.'
       );
     }
 
@@ -443,27 +454,25 @@ export async function transferOwnership(
       id: string;
       user_id: string;
       role: string;
+      status: string;
     }>(
-      `SELECT id, user_id, role FROM memberships WHERE id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+      `SELECT id, user_id, role, status FROM memberships WHERE id = $1 AND club_id = $2 LIMIT 1`,
       [targetMembershipId, clubId]
     );
     const target = targetResult.rows[0];
+
     if (!target) {
-      throw new AppError(
-        404,
-        'MEMBERSHIP_NOT_FOUND',
-        'Target membership not found.'
-      );
+      throw new AppError(404, 'TARGET_NOT_FOUND', 'Target membership not found in this club.');
     }
-    if (normalizeRole(target.role) !== 'host') {
-      throw new AppError(
-        400,
-        'INVALID_TARGET',
-        'Ownership can only be transferred to an existing host.'
-      );
+    if (target.status !== 'active') {
+      throw new AppError(400, 'TARGET_NOT_ACTIVE', 'Target membership is not active.');
+    }
+    const targetRole = normalizeRole(target.role);
+    if (targetRole !== 'member' && targetRole !== 'host') {
+      throw new AppError(400, 'INVALID_TARGET', 'Target must be a member or host.');
     }
 
-    // Atomic swap
+    // Atomic role swap — exactly one owner afterwards.
     await client.query(
       `UPDATE memberships SET role = 'owner', updated_at = NOW() WHERE id = $1`,
       [target.id]
@@ -480,10 +489,26 @@ export async function transferOwnership(
       entityType: 'club',
       entityId: clubId,
       action: 'ownership_transferred',
-      metadata: { fromMembershipId: actor.id, toMembershipId: target.id },
+      metadata: {
+        oldOwnerMembershipId: actor.id,
+        newOwnerMembershipId: target.id,
+      },
     });
 
     await client.query('COMMIT');
+
+    void recordSystemEvent({
+      category: 'club',
+      event_type: 'ownership_transferred',
+      event_status: 'info',
+      club_id: clubId,
+      membership_id: actorMembershipId,
+      message: 'Club ownership transferred',
+      details: {
+        oldOwnerMembershipId: actor.id,
+        newOwnerMembershipId: target.id,
+      },
+    });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;
