@@ -314,6 +314,7 @@ export async function verifyApplePurchase(
     return {
       valid: true,
       verificationMode: 'real',
+      appleEnvironment: (verifyResponse.environment as 'Sandbox' | 'Production' | undefined) ?? undefined,
       productId: matched.product_id ?? input.productId,
       transactionId: matched.transaction_id,
       originalTransactionId: matched.original_transaction_id,

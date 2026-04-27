@@ -822,6 +822,7 @@ export async function createOrScheduleSubscriptionForClub(
       : {}),
     _iapVerification: {
       verificationMode: verifyResult.verificationMode ?? 'real',
+      ...(verifyResult.appleEnvironment ? { appleEnvironment: verifyResult.appleEnvironment } : {}),
       platform,
       productId: verifyResult.productId,
       transactionId: finalTransactionId,
