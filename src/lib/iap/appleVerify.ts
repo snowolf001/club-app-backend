@@ -236,19 +236,40 @@ export async function verifyApplePurchase(
 
     const sharedSecret = requireEnv('APPLE_SHARED_SECRET');
 
-    // 先打生产；若收到 21007，再切到 sandbox
-    let verifyResponse = await postVerifyReceipt(
-      APPLE_PRODUCTION_VERIFY_URL,
-      input.receiptData,
-      sharedSecret
-    );
+    // 先打生产；若收到 21007，再切到 sandbox。
+    // Apple 21100-21199 是瞬时内部错误，最多重试 2 次（1s / 2s 间隔）。
+    const MAX_VERIFY_ATTEMPTS = 3;
+    let verifyResponse!: AppleVerifyReceiptResponse;
 
-    if (verifyResponse.status === 21007) {
+    for (let attempt = 1; attempt <= MAX_VERIFY_ATTEMPTS; attempt++) {
       verifyResponse = await postVerifyReceipt(
-        APPLE_SANDBOX_VERIFY_URL,
+        APPLE_PRODUCTION_VERIFY_URL,
         input.receiptData,
         sharedSecret
       );
+
+      if (verifyResponse.status === 21007) {
+        verifyResponse = await postVerifyReceipt(
+          APPLE_SANDBOX_VERIFY_URL,
+          input.receiptData,
+          sharedSecret
+        );
+      }
+
+      const isTransient =
+        verifyResponse.status >= 21100 && verifyResponse.status <= 21199;
+
+      if (isTransient && attempt < MAX_VERIFY_ATTEMPTS) {
+        logger.warn('[apple-verify] transient error, retrying', {
+          attempt,
+          status: verifyResponse.status,
+          productId: input.productId,
+        });
+        await new Promise((r) => setTimeout(r, attempt * 1000));
+        continue;
+      }
+
+      break;
     }
 
     if (verifyResponse.status !== 0) {
