@@ -91,7 +91,11 @@ export async function getMembershipById(membershipId: string): Promise<{
      FROM memberships m
      JOIN clubs c ON c.id = m.club_id
      JOIN users u ON u.id = m.user_id
-     WHERE m.id = $1 LIMIT 1`,
+     WHERE m.id = $1
+       AND m.status   = 'active'
+       AND m.deleted_at IS NULL
+       AND u.deleted_at IS NULL
+     LIMIT 1`,
     [membershipId]
   );
 
@@ -125,7 +129,10 @@ export async function getMembershipByRecoveryCode(
      FROM memberships m
      JOIN clubs c ON c.id = m.club_id
      JOIN users u ON u.id = m.user_id
-     WHERE LOWER(m.recovery_code) = LOWER($1) LIMIT 1`,
+     WHERE LOWER(m.recovery_code) = LOWER($1)
+       AND m.deleted_at IS NULL
+       AND u.deleted_at IS NULL
+     LIMIT 1`,
     [recoveryCode]
   );
 

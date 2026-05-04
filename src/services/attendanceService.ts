@@ -111,7 +111,7 @@ export async function getCreditTransactionsForUser(
         ct.transaction_type,
         ct.note,
         s.title AS session_title,
-        u.name  AS actor_name,
+        CASE WHEN u.deleted_at IS NOT NULL THEN 'Deleted Member' ELSE u.name END AS actor_name,
         ct.created_at
       FROM credit_transactions ct
       LEFT JOIN sessions s ON s.id = ct.session_id
@@ -151,7 +151,7 @@ export async function getCreditTransactionsForMembership(
         ct.transaction_type,
         ct.note,
         s.title AS session_title,
-        u.name  AS actor_name,
+        CASE WHEN u.deleted_at IS NOT NULL THEN 'Deleted Member' ELSE u.name END AS actor_name,
         ct.created_at
       FROM credit_transactions ct
       LEFT JOIN sessions s ON s.id = ct.session_id

@@ -128,7 +128,7 @@ export async function getSessionIntentSummary(
   const rows = await pool.query<IntentRow>(
     `SELECT si.membership_id,
             m.display_name,
-            u.name AS user_name
+            CASE WHEN u.deleted_at IS NOT NULL THEN 'Deleted Member' ELSE u.name END AS user_name
      FROM session_intents si
      JOIN memberships m ON m.id = si.membership_id
      JOIN users u       ON u.id = m.user_id

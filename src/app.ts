@@ -9,6 +9,7 @@ import reportRoutes from './routes/reportRoutes';
 import analyticsRoutes from './routes/analyticsRoutes';
 import subscriptionRoutes from './routes/subscriptionRoutes';
 import subscriptionWebhookRoutes from './routes/subscriptionWebhookRoutes';
+import userRoutes from './routes/userRoutes';
 import { requestLogger } from './middleware/requestLogger';
 import { errorHandler } from './middleware/errorHandler';
 import { apiKeyAuth } from './middleware/apiKeyAuth';
@@ -38,6 +39,7 @@ app.use('/api', apiKeyAuth, clubRoutes);
 app.use('/api', apiKeyAuth, reportRoutes);
 app.use('/api', apiKeyAuth, analyticsRoutes);
 app.use('/api', apiKeyAuth, subscriptionRoutes);
+app.use('/api', apiKeyAuth, userRoutes);
 
 app.use(errorHandler);
 

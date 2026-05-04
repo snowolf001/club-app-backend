@@ -139,7 +139,7 @@ export async function getCheckedInMembers(
       SELECT
         a.membership_id,
         a.user_id,
-        u.name    AS user_name,
+        CASE WHEN u.deleted_at IS NOT NULL THEN 'Deleted Member' ELSE u.name END AS user_name,
         m.role,
         a.checked_in_at,
         a.credits_used

@@ -80,14 +80,19 @@ export async function getSessionAttendees(
       SELECT
         a.id             AS attendance_id,
         a.membership_id,
-        u.name           AS member_name,
+        CASE
+          WHEN m.deleted_at IS NOT NULL OR u.deleted_at IS NOT NULL
+          THEN 'Deleted Member'
+          ELSE COALESCE(NULLIF(m.display_name, ''), NULLIF(u.name, ''), 'Deleted Member')
+        END              AS member_name,
         a.credits_used,
         a.check_in_method,
         a.checked_in_at,
         a.checked_in_by_user_id,
-        cbu.name         AS checked_in_by_name
+        CASE WHEN cbu.deleted_at IS NOT NULL THEN 'Deleted Member' ELSE cbu.name END AS checked_in_by_name
       FROM attendances a
       JOIN users u ON u.id = a.user_id
+      LEFT JOIN memberships m ON m.id = a.membership_id
       LEFT JOIN users cbu ON cbu.id = a.checked_in_by_user_id
       WHERE a.session_id = $1
       ORDER BY a.checked_in_at ASC
@@ -180,13 +185,19 @@ export async function getMemberHistory(params: {
 }): Promise<MemberHistoryResult> {
   const { membershipId, startDate, endDate, limit = 100 } = params;
 
-  // Look up membership info
+  // Look up membership info — include deleted memberships so historical
+  // history can still be viewed; show 'Deleted Member' when anonymised.
   const memberResult = await pool.query<{
     id: string;
     user_id: string;
     user_name: string;
   }>(
-    `SELECT m.id, m.user_id, u.name AS user_name
+    `SELECT m.id, m.user_id,
+            CASE
+              WHEN m.deleted_at IS NOT NULL OR u.deleted_at IS NOT NULL
+              THEN 'Deleted Member'
+              ELSE COALESCE(NULLIF(m.display_name, ''), NULLIF(u.name, ''), 'Deleted Member')
+            END AS user_name
      FROM memberships m
      JOIN users u ON u.id = m.user_id
      WHERE m.id = $1 LIMIT 1`,
@@ -222,7 +233,7 @@ export async function getMemberHistory(params: {
         a.credits_used,
         a.check_in_method,
         a.checked_in_at,
-        cbu.name         AS checked_in_by_name
+        CASE WHEN cbu.deleted_at IS NOT NULL THEN 'Deleted Member' ELSE cbu.name END AS checked_in_by_name
       FROM attendances a
       JOIN sessions s ON s.id = a.session_id
       LEFT JOIN club_locations cl ON cl.id = s.location_id
@@ -358,14 +369,19 @@ export async function getAttendanceReport(params: {
         s.starts_at      AS session_starts_at,
         cl.name          AS location_name,
         a.membership_id,
-        u.name           AS member_name,
+        CASE
+          WHEN m.deleted_at IS NOT NULL OR u.deleted_at IS NOT NULL
+          THEN 'Deleted Member'
+          ELSE COALESCE(NULLIF(m.display_name, ''), NULLIF(u.name, ''), 'Deleted Member')
+        END AS member_name,
         a.credits_used,
         a.check_in_method,
         a.checked_in_at,
-        cbu.name         AS checked_in_by_name
+        CASE WHEN cbu.deleted_at IS NOT NULL THEN 'Deleted Member' ELSE cbu.name END AS checked_in_by_name
       FROM attendances a
       JOIN sessions s ON s.id = a.session_id
       JOIN users u ON u.id = a.user_id
+      LEFT JOIN memberships m ON m.id = a.membership_id
       LEFT JOIN club_locations cl ON cl.id = s.location_id
       LEFT JOIN users cbu ON cbu.id = a.checked_in_by_user_id
       WHERE ${conditions.join(' AND ')}
@@ -518,12 +534,12 @@ export async function getSessionsBreakdown(params: {
         a.session_id,
         a.id AS attendance_id,
         a.membership_id,
-        u.name AS member_name,
+        CASE WHEN u.deleted_at IS NOT NULL THEN 'Deleted Member' ELSE u.name END AS member_name,
         a.credits_used,
         a.check_in_method,
         a.checked_in_at,
         a.checked_in_by_user_id,
-        cbu.name AS checked_in_by_name
+        CASE WHEN cbu.deleted_at IS NOT NULL THEN 'Deleted Member' ELSE cbu.name END AS checked_in_by_name
       FROM attendances a
       JOIN users u ON u.id = a.user_id
       LEFT JOIN users cbu ON cbu.id = a.checked_in_by_user_id

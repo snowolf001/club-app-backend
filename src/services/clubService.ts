@@ -187,6 +187,9 @@ export async function getClubMembers(clubId: string): Promise<ClubMember[]> {
      FROM memberships m
      JOIN users u ON u.id = m.user_id
      WHERE m.club_id = $1
+       AND m.status   = 'active'
+       AND m.deleted_at IS NULL
+       AND u.deleted_at IS NULL
      ORDER BY COALESCE(m.display_name, u.name)`,
     [clubId]
   );
@@ -291,12 +294,15 @@ export async function joinClub(
   // Ensure a users row exists for this userId before any FK-dependent inserts.
   await ensureUserExists(userId, displayName);
 
-  // Check if the display_name is already taken by any row (active or removed).
-  // The unique index enforces this at DB level too; we check first for a clean error.
+  // Check if the display_name is already taken by a non-deleted, active or removed row.
+  // Deleted memberships (deleted_at IS NOT NULL) have display_name='Deleted Member' and
+  // must not cause false conflicts for new joiners.
+  // The partial unique index (WHERE deleted_at IS NULL) enforces this at DB level too.
   const duplicate = await pool.query<{ id: string }>(
     `SELECT id FROM memberships
-     WHERE club_id = $1
+     WHERE club_id     = $1
        AND lower(display_name) = lower($2)
+       AND deleted_at  IS NULL
      LIMIT 1`,
     [clubId, displayName]
   );
