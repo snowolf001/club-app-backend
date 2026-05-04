@@ -219,6 +219,12 @@ export async function checkInToSession({
       );
     }
 
+    logger.info('[checkinService] credit deduction', {
+      membershipId: membership.id,
+      creditsBefore: membership.credits_remaining,
+      creditsUsed,
+    });
+
     const updatedMembershipResult = await client.query<{
       credits_remaining: number;
     }>(
