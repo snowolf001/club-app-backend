@@ -236,19 +236,40 @@ export async function verifyApplePurchase(
 
     const sharedSecret = requireEnv('APPLE_SHARED_SECRET');
 
-    // 先打生产；若收到 21007，再切到 sandbox
-    let verifyResponse = await postVerifyReceipt(
-      APPLE_PRODUCTION_VERIFY_URL,
-      input.receiptData,
-      sharedSecret
-    );
+    // 先打生产；若收到 21007，再切到 sandbox。
+    // Apple 21100-21199 是瞬时内部错误，最多重试 2 次（1s / 2s 间隔）。
+    const MAX_VERIFY_ATTEMPTS = 3;
+    let verifyResponse!: AppleVerifyReceiptResponse;
 
-    if (verifyResponse.status === 21007) {
+    for (let attempt = 1; attempt <= MAX_VERIFY_ATTEMPTS; attempt++) {
       verifyResponse = await postVerifyReceipt(
-        APPLE_SANDBOX_VERIFY_URL,
+        APPLE_PRODUCTION_VERIFY_URL,
         input.receiptData,
         sharedSecret
       );
+
+      if (verifyResponse.status === 21007) {
+        verifyResponse = await postVerifyReceipt(
+          APPLE_SANDBOX_VERIFY_URL,
+          input.receiptData,
+          sharedSecret
+        );
+      }
+
+      const isTransient =
+        verifyResponse.status >= 21100 && verifyResponse.status <= 21199;
+
+      if (isTransient && attempt < MAX_VERIFY_ATTEMPTS) {
+        logger.warn('[apple-verify] transient error, retrying', {
+          attempt,
+          status: verifyResponse.status,
+          productId: input.productId,
+        });
+        await new Promise((r) => setTimeout(r, attempt * 1000));
+        continue;
+      }
+
+      break;
     }
 
     if (verifyResponse.status !== 0) {
@@ -300,7 +321,26 @@ export async function verifyApplePurchase(
         raw: verifyResponse,
       };
     }
-
+    // Reject expired subscriptions.
+    // Apple verifyReceipt returns status 0 even for expired subscriptions; the
+    // receipt is technically valid but the entitlement has ended.  If we do not
+    // check here the service layer will treat the apple-stated calendar expiry
+    // as a valid endsAt and create a brand-new active subscription row — giving
+    // the user free Pro access after their subscription already expired.
+    const expiresAtMs = toMs(matched.expires_date_ms);
+    if (expiresAtMs !== null && expiresAtMs < Date.now()) {
+      return {
+        valid: false,
+        verificationMode: 'real',
+        appleEnvironment: (verifyResponse.environment as 'Sandbox' | 'Production' | undefined) ?? undefined,
+        productId: matched.product_id ?? input.productId,
+        transactionId: matched.transaction_id,
+        originalTransactionId: matched.original_transaction_id,
+        errorCode: 'SUBSCRIPTION_EXPIRED',
+        errorMessage: 'Apple subscription has expired',
+        raw: verifyResponse,
+      };
+    }
     // Extract auto-renew status from pending_renewal_info for the matched transaction
     const pendingRenewals = verifyResponse.pending_renewal_info ?? [];
     const pendingForMatch = pendingRenewals.find(
@@ -314,6 +354,7 @@ export async function verifyApplePurchase(
     return {
       valid: true,
       verificationMode: 'real',
+      appleEnvironment: (verifyResponse.environment as 'Sandbox' | 'Production' | undefined) ?? undefined,
       productId: matched.product_id ?? input.productId,
       transactionId: matched.transaction_id,
       originalTransactionId: matched.original_transaction_id,

@@ -187,8 +187,31 @@ async function insertAppleWebhookEvent(params: {
  * Returns the row plus its club_id for Pro cache refresh.
  */
 async function findSubscriptionByOriginalTransactionId(
-  originalTransactionId: string
+  originalTransactionId: string,
+  productId?: string
 ): Promise<{ id: string; clubId: string; status: string; productId: string } | null> {
+  // When productId is provided, prefer an exact product match to avoid
+  // confusing rows from different plan cycles that share the same
+  // original_transaction_id (e.g. a yearly row and a later monthly row).
+  if (productId) {
+    const exact = await db.query(
+      `
+      SELECT id, club_id, status, product_id
+        FROM club_subscriptions
+       WHERE platform = 'ios'
+         AND original_transaction_id = $1
+         AND product_id = $2
+       ORDER BY created_at DESC
+       LIMIT 1
+      `,
+      [originalTransactionId, productId]
+    );
+    if (exact.rows[0]) {
+      const r = exact.rows[0] as { id: string; club_id: string; status: string; product_id: string };
+      return { id: r.id, clubId: r.club_id, status: r.status, productId: r.product_id };
+    }
+  }
+
   const result = await db.query(
     `
     SELECT id, club_id, status, product_id
@@ -375,8 +398,12 @@ async function handleExpiry(
 ): Promise<void> {
   const { transactionId, originalTransactionId, productId } = txInfo;
 
+  // Pass productId so we match the exact plan row (e.g. yearly) and don't
+  // accidentally expire a newer row for a different product (e.g. monthly)
+  // that happens to share the same original_transaction_id.
   const existing = await findSubscriptionByOriginalTransactionId(
-    originalTransactionId
+    originalTransactionId,
+    productId
   );
 
   if (!existing) {

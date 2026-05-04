@@ -49,4 +49,10 @@ export interface IapVerifyResult {
    * 'real' — genuine Apple verifyReceipt call was made.
    */
   verificationMode?: 'mock' | 'real';
+
+  /**
+   * Apple-specific: whether the receipt was verified against Sandbox or Production.
+   * Only present when platform is iOS and verificationMode is 'real'.
+   */
+  appleEnvironment?: 'Sandbox' | 'Production';
 }
