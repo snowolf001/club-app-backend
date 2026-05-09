@@ -19,6 +19,10 @@ async function start(): Promise<void> {
     // Logs WARN if expiry is within 365 days, ERROR if already expired.
     logAppleRootCaExpiry();
 
+    // ─── DinnerReady env check ──────────────────────────────────
+    console.log('[DinnerReady] OPENAI_API_KEY present:', Boolean(process.env.OPENAI_API_KEY));
+    console.log('[DinnerReady] OPENAI_MODEL:', process.env.OPENAI_MODEL ?? '(not set, will use default)');
+
     app.listen(port, () => {
       console.log(`[server] Club App backend listening on port ${port}`);
 
