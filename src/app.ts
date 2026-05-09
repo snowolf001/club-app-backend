@@ -14,6 +14,7 @@ import { requestLogger } from './middleware/requestLogger';
 import { errorHandler } from './middleware/errorHandler';
 import { apiKeyAuth } from './middleware/apiKeyAuth';
 import googleWebhookRoutes from './routes/googleWebhookRoutes';
+import dinnerReadyRoutes from './dinnerready/dinnerready.routes';
 
 const app = express();
 
@@ -40,6 +41,9 @@ app.use('/api', apiKeyAuth, reportRoutes);
 app.use('/api', apiKeyAuth, analyticsRoutes);
 app.use('/api', apiKeyAuth, subscriptionRoutes);
 app.use('/api', apiKeyAuth, userRoutes);
+
+// DinnerReady — isolated module, no apiKeyAuth (stateless, OpenAI-only)
+app.use('/api/dinnerready', dinnerReadyRoutes);
 
 app.use(errorHandler);
 
