@@ -50,6 +50,22 @@ export function startSystemEventsCleanupJob(): void {
         );
       `);
 
+      // ─── 14 days (client-side diagnostic events) ──────────────────────────
+      // Categories emitted by the mobile app via POST /api/client-events.
+      // Kept longer than the 7-day default so TestFlight / production issues
+      // can be investigated across a full two-week release cycle.
+      await db.query(`
+        DELETE FROM system_events
+        WHERE created_at < NOW() - INTERVAL '14 days'
+        AND category IN (
+          'app',
+          'iap_client',
+          'ui_state',
+          'api_client',
+          'critical_flow'
+        );
+      `);
+
       // ─── 7 days (everything else) ─────────────
       await db.query(`
         DELETE FROM system_events
