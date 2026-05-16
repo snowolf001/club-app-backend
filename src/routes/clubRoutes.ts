@@ -14,6 +14,8 @@ import {
   removeMemberHandler,
   leaveClubHandler,
   recoverClubMembershipHandler,
+  getClubInfoHandler,
+  updateClubInfoHandler,
 } from '../controllers/clubController';
 
 import { identifyUser } from '../middleware/identifyUser';
@@ -57,5 +59,9 @@ router.post(
 router.post('/clubs/:clubId/recover', recoverClubMembershipHandler);
 router.post('/clubs/join', joinClubHandler);
 router.post('/clubs', createClubHandler);
+
+// Club info endpoints
+router.get('/clubs/:clubId/info', identifyUser, getClubInfoHandler);
+router.patch('/clubs/:clubId/info', identifyUser, updateClubInfoHandler);
 
 export default router;

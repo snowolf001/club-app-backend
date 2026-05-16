@@ -5,6 +5,7 @@ import {
   postSessionCheckIn,
   getCheckedInHandler,
   createSessionHandler,
+  createRecurringSessionsHandler,
   updateSessionHandler,
   postManualCheckIn,
   deleteSessionHandler,
@@ -20,6 +21,11 @@ const router = Router();
 router.get('/sessions', identifyUser, getSessionsHandler);
 router.get('/sessions/:sessionId', identifyUser, getSessionHandler);
 router.post('/sessions', identifyUser, createSessionHandler);
+router.post(
+  '/sessions/recurring',
+  identifyUser,
+  createRecurringSessionsHandler
+);
 router.patch('/sessions/:sessionId', identifyUser, updateSessionHandler);
 router.delete('/sessions/:sessionId', identifyUser, deleteSessionHandler);
 router.post('/sessions/:sessionId/checkin', identifyUser, postSessionCheckIn);

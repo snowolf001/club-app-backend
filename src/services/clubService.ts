@@ -52,6 +52,11 @@ type ClubRow = {
   member_backfill_hours: number;
   host_backfill_hours: number;
   enable_session_intents: boolean;
+  club_info_text: string | null;
+  credit_purchase_instructions: string | null;
+  contact_info: string | null;
+  payment_methods: unknown; // JSONB
+  club_logo_url: string | null;
 };
 
 type LocationRow = {
@@ -78,6 +83,7 @@ export type ClubItem = {
   clubId: string;
   name: string;
   joinCode: string | null;
+  clubLogoUrl?: string | null;
 };
 
 export type ClubSettings = {
@@ -107,7 +113,12 @@ export type ClubMember = {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function mapClub(row: ClubRow): ClubItem {
-  return { clubId: row.id, name: row.name, joinCode: row.join_code };
+  return {
+    clubId: row.id,
+    name: row.name,
+    joinCode: row.join_code,
+    clubLogoUrl: row.club_logo_url ?? null,
+  };
 }
 
 function mapSettings(row: ClubRow): ClubSettings {
@@ -123,7 +134,8 @@ function mapSettings(row: ClubRow): ClubSettings {
 
 async function fetchClubRow(clubId: string): Promise<ClubRow> {
   const result = await pool.query<ClubRow>(
-    `SELECT id, name, join_code, allow_member_backfill, member_backfill_hours, host_backfill_hours, enable_session_intents
+    `SELECT id, name, join_code, allow_member_backfill, member_backfill_hours, host_backfill_hours, enable_session_intents,
+            club_info_text, credit_purchase_instructions, contact_info, payment_methods, club_logo_url
      FROM clubs WHERE id = $1 LIMIT 1`,
     [clubId]
   );
@@ -426,7 +438,11 @@ export async function transferOwnership(
   targetMembershipId: string
 ): Promise<void> {
   if (actorMembershipId === targetMembershipId) {
-    throw new AppError(400, 'INVALID_TARGET', 'Cannot transfer ownership to yourself.');
+    throw new AppError(
+      400,
+      'INVALID_TARGET',
+      'Cannot transfer ownership to yourself.'
+    );
   }
 
   const client = await pool.connect();
@@ -468,14 +484,26 @@ export async function transferOwnership(
     const target = targetResult.rows[0];
 
     if (!target) {
-      throw new AppError(404, 'TARGET_NOT_FOUND', 'Target membership not found in this club.');
+      throw new AppError(
+        404,
+        'TARGET_NOT_FOUND',
+        'Target membership not found in this club.'
+      );
     }
     if (target.status !== 'active') {
-      throw new AppError(400, 'TARGET_NOT_ACTIVE', 'Target membership is not active.');
+      throw new AppError(
+        400,
+        'TARGET_NOT_ACTIVE',
+        'Target membership is not active.'
+      );
     }
     const targetRole = normalizeRole(target.role);
     if (targetRole !== 'member' && targetRole !== 'host') {
-      throw new AppError(400, 'INVALID_TARGET', 'Target must be a member or host.');
+      throw new AppError(
+        400,
+        'INVALID_TARGET',
+        'Target must be a member or host.'
+      );
     }
 
     // Atomic role swap — exactly one owner afterwards.
@@ -698,4 +726,132 @@ export async function recoverMemberByDisplayName(
     role: row.role,
     credits: row.credits_remaining,
   };
+}
+
+// ─── Club Info ────────────────────────────────────────────────────────────────
+
+function isValidUrl(url: string): boolean {
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    return false;
+  }
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export type PaymentMethod = {
+  id: string;
+  type:
+    | 'venmo'
+    | 'paypal'
+    | 'zelle'
+    | 'cashapp'
+    | 'wechat'
+    | 'alipay'
+    | 'other';
+  label: string;
+  qrImageUrl: string | null;
+  paymentLink: string | null;
+  note: string | null;
+};
+
+export type ClubInfo = {
+  clubInfoText: string | null;
+  creditPurchaseInstructions: string | null;
+  contactInfo: string | null;
+  paymentMethods: PaymentMethod[];
+  clubLogoUrl: string | null;
+};
+
+export async function getClubInfo(clubId: string): Promise<ClubInfo> {
+  const row = await fetchClubRow(clubId);
+
+  let paymentMethods: PaymentMethod[] = [];
+  if (row.payment_methods) {
+    try {
+      const parsed = row.payment_methods as PaymentMethod[];
+      paymentMethods = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      paymentMethods = [];
+    }
+  }
+
+  return {
+    clubInfoText: row.club_info_text ?? null,
+    creditPurchaseInstructions: row.credit_purchase_instructions ?? null,
+    contactInfo: row.contact_info ?? null,
+    paymentMethods,
+    clubLogoUrl: row.club_logo_url ?? null,
+  };
+}
+
+export async function updateClubInfo(
+  clubId: string,
+  updates: Partial<ClubInfo>
+): Promise<ClubInfo> {
+  const queryParts: string[] = [];
+  const values: unknown[] = [];
+  let idx = 1;
+
+  if (updates.clubInfoText !== undefined) {
+    queryParts.push(`club_info_text = $${idx++}`);
+    values.push(updates.clubInfoText);
+  }
+  if (updates.creditPurchaseInstructions !== undefined) {
+    queryParts.push(`credit_purchase_instructions = $${idx++}`);
+    values.push(updates.creditPurchaseInstructions);
+  }
+  if (updates.contactInfo !== undefined) {
+    queryParts.push(`contact_info = $${idx++}`);
+    values.push(updates.contactInfo);
+  }
+  if (updates.paymentMethods !== undefined) {
+    // Validate max 5 payment methods
+    if (updates.paymentMethods.length > 5) {
+      throw new AppError(
+        400,
+        'TOO_MANY_PAYMENT_METHODS',
+        'Maximum 5 payment methods allowed.'
+      );
+    }
+    // Validate payment links
+    for (const method of updates.paymentMethods) {
+      if (method.paymentLink && !isValidUrl(method.paymentLink)) {
+        throw new AppError(
+          400,
+          'INVALID_PAYMENT_LINK',
+          'Payment link must be a valid URL starting with http:// or https://'
+        );
+      }
+    }
+    queryParts.push(`payment_methods = $${idx++}::jsonb`);
+    values.push(JSON.stringify(updates.paymentMethods));
+  }
+  if (updates.clubLogoUrl !== undefined) {
+    // Validate logo URL
+    if (updates.clubLogoUrl && !isValidUrl(updates.clubLogoUrl)) {
+      throw new AppError(
+        400,
+        'INVALID_LOGO_URL',
+        'Club logo URL must start with http:// or https://'
+      );
+    }
+    queryParts.push(`club_logo_url = $${idx++}`);
+    values.push(updates.clubLogoUrl);
+  }
+
+  if (queryParts.length === 0) {
+    return getClubInfo(clubId);
+  }
+
+  values.push(clubId);
+  await pool.query(
+    `UPDATE clubs SET ${queryParts.join(', ')}, updated_at = NOW() WHERE id = $${idx}`,
+    values
+  );
+
+  return getClubInfo(clubId);
 }

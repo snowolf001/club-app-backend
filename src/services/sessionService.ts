@@ -291,3 +291,105 @@ export async function updateSession(
 
   return getSessionById(sessionId);
 }
+
+// ─── Recurring Sessions ───────────────────────────────────────────────────────
+
+export async function createRecurringSessions(params: {
+  clubId: string;
+  title?: string | null;
+  locationId: string;
+  startTime: string;
+  endTime: string;
+  capacity?: number | null;
+  hostMembershipId?: string | null;
+  repeatCount: number; // Number of weeks to repeat
+}): Promise<SessionItem[]> {
+  const {
+    clubId,
+    title,
+    locationId,
+    startTime,
+    endTime,
+    capacity,
+    hostMembershipId,
+    repeatCount,
+  } = params;
+
+  // Validate repeat count
+  if (repeatCount < 1 || repeatCount > 26) {
+    throw new AppError(
+      400,
+      'INVALID_REPEAT_COUNT',
+      'Repeat count must be between 1 and 26 weeks.'
+    );
+  }
+
+  if (hostMembershipId) {
+    await assertHostInClub(hostMembershipId, clubId);
+  }
+
+  // Parse the start and end times
+  const baseStartDate = new Date(startTime);
+  const baseEndDate = new Date(endTime);
+
+  if (isNaN(baseStartDate.getTime()) || isNaN(baseEndDate.getTime())) {
+    throw new AppError(
+      400,
+      'INVALID_DATE',
+      'Start time and end time must be valid dates.'
+    );
+  }
+
+  // Calculate session duration in milliseconds
+  const sessionDuration = baseEndDate.getTime() - baseStartDate.getTime();
+
+  if (sessionDuration <= 0) {
+    throw new AppError(
+      400,
+      'INVALID_TIME_RANGE',
+      'End time must be after start time.'
+    );
+  }
+
+  // Capacity Pro gate check
+  if ((capacity ?? 0) > 0) {
+    const proStatus = await getClubProStatus(clubId);
+    if (!proStatus.isPro) {
+      throw new AppError(
+        403,
+        'PRO_REQUIRED',
+        'Custom session capacity is a Pro feature.'
+      );
+    }
+  }
+
+  const createdSessions: SessionItem[] = [];
+
+  // Create sessions for each week
+  for (let i = 0; i < repeatCount; i++) {
+    // Calculate the start time for this occurrence (add i weeks)
+    const occurrenceStart = new Date(baseStartDate);
+    occurrenceStart.setDate(occurrenceStart.getDate() + i * 7);
+
+    const occurrenceEnd = new Date(occurrenceStart.getTime() + sessionDuration);
+
+    const result = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (club_id, title, location_id, starts_at, ends_at, capacity, host_membership_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [
+        clubId,
+        title?.trim() || null,
+        locationId,
+        occurrenceStart.toISOString(),
+        occurrenceEnd.toISOString(),
+        capacity ?? null,
+        hostMembershipId ?? null,
+      ]
+    );
+
+    const session = await getSessionById(result.rows[0].id);
+    createdSessions.push(session);
+  }
+
+  return createdSessions;
+}

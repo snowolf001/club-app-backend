@@ -24,6 +24,8 @@ import {
   removeMember,
   leaveClub,
   recoverMemberByDisplayName,
+  getClubInfo,
+  updateClubInfo,
 } from '../services/clubService';
 
 // ─── GET /api/clubs/:clubId ───────────────────────────────────────────────────
@@ -526,6 +528,109 @@ export async function recoverClubMembershipHandler(
       recoveryCode.trim()
     );
     res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── GET /api/clubs/:clubId/info ─────────────────────────────────────────────
+
+export async function getClubInfoHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const clubId = req.params['clubId'] as string;
+    if (!isValidUUID(clubId)) {
+      throw new AppError(
+        400,
+        'INVALID_CLUB_ID',
+        'clubId must be a valid UUID.'
+      );
+    }
+    const info = await getClubInfo(clubId);
+    res.json({ success: true, data: info });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── PATCH /api/clubs/:clubId/info ───────────────────────────────────────────
+
+export async function updateClubInfoHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const clubId = req.params['clubId'] as string;
+    if (!isValidUUID(clubId)) {
+      throw new AppError(
+        400,
+        'INVALID_CLUB_ID',
+        'clubId must be a valid UUID.'
+      );
+    }
+
+    // Only the owner can update club info
+    const actorMemberId = getActorMemberId(req);
+    const actorRow = await pool.query<{ role: string; user_id: string }>(
+      `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [actorMemberId]
+    );
+    if (!canChangeClubSettings(normalizeRole(actorRow.rows[0]?.role))) {
+      throw new AppError(
+        403,
+        'UNAUTHORIZED',
+        'Only the owner can update club info.'
+      );
+    }
+
+    const {
+      clubInfoText,
+      creditPurchaseInstructions,
+      contactInfo,
+      paymentMethods,
+      clubLogoUrl,
+    } = req.body as Record<string, unknown>;
+
+    // Helper to trim and convert empty strings to null
+    const trimOrNull = (val: unknown): string | null | undefined => {
+      if (val === null) return null;
+      if (typeof val === 'string') {
+        const trimmed = val.trim();
+        return trimmed === '' ? null : trimmed;
+      }
+      return undefined;
+    };
+
+    const info = await updateClubInfo(clubId, {
+      clubInfoText: trimOrNull(clubInfoText),
+      creditPurchaseInstructions: trimOrNull(creditPurchaseInstructions),
+      contactInfo: trimOrNull(contactInfo),
+      paymentMethods: Array.isArray(paymentMethods)
+        ? paymentMethods
+        : undefined,
+      clubLogoUrl: trimOrNull(clubLogoUrl),
+    });
+
+    void createAuditLog({
+      clubId,
+      actorUserId: actorRow.rows[0].user_id,
+      entityType: 'club',
+      entityId: clubId,
+      action: 'club_info_updated',
+      metadata: {
+        clubInfoText,
+        creditPurchaseInstructions,
+        contactInfo,
+        paymentMethods,
+        clubLogoUrl,
+      },
+    });
+
+    res.json({ success: true, data: info });
   } catch (error) {
     next(error);
   }

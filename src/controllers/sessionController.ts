@@ -21,6 +21,7 @@ import {
   createSession,
   updateSession,
   deleteSession,
+  createRecurringSessions,
 } from '../services/sessionService';
 
 // ─── GET /api/sessions?clubId=... ─────────────────────────────────────────────
@@ -316,6 +317,168 @@ export async function createSessionHandler(
     });
 
     res.status(201).json({ success: true, data: session });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── POST /api/sessions/recurring ────────────────────────────────────────────
+
+export async function createRecurringSessionsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const {
+      clubId,
+      title,
+      locationId,
+      startTime,
+      endTime,
+      capacity,
+      hostMembershipId,
+      repeatCount,
+    } = req.body as Record<string, unknown>;
+
+    // Validation
+    if (typeof clubId !== 'string' || !isValidUUID(clubId)) {
+      throw new AppError(
+        400,
+        'INVALID_CLUB_ID',
+        'clubId must be a valid UUID.'
+      );
+    }
+
+    // Only hosts and owners may create sessions
+    const actorMemberId = getActorMemberId(req);
+    const actorRow = await pool.query<{ role: string; user_id: string }>(
+      `SELECT role, user_id FROM memberships WHERE id = $1 AND status = 'active' LIMIT 1`,
+      [actorMemberId]
+    );
+    if (!canManageSession(normalizeRole(actorRow.rows[0]?.role))) {
+      throw new AppError(
+        403,
+        'UNAUTHORIZED',
+        'Only hosts and owners can create sessions.'
+      );
+    }
+
+    // locationId is required
+    if (locationId === undefined || locationId === null || locationId === '') {
+      throw new AppError(
+        400,
+        'LOCATION_ID_REQUIRED',
+        'locationId is required.'
+      );
+    }
+    if (typeof locationId !== 'string' || !isValidUUID(locationId)) {
+      throw new AppError(
+        400,
+        'INVALID_LOCATION_ID',
+        'locationId must be a valid UUID.'
+      );
+    }
+
+    // Validate location exists and belongs to this club
+    const locRow = await pool.query<{ id: string }>(
+      `SELECT id FROM club_locations WHERE id = $1 AND club_id = $2 LIMIT 1`,
+      [locationId, clubId]
+    );
+    if ((locRow.rowCount ?? 0) === 0) {
+      throw new AppError(
+        404,
+        'LOCATION_NOT_FOUND',
+        'Location does not exist or does not belong to this club.'
+      );
+    }
+
+    // Validate title
+    if (
+      title !== undefined &&
+      title !== null &&
+      (typeof title !== 'string' || !title.trim())
+    ) {
+      throw new AppError(
+        400,
+        'INVALID_TITLE',
+        'title must be a non-empty string if provided.'
+      );
+    }
+
+    // Validate host
+    if (hostMembershipId !== undefined && hostMembershipId !== null) {
+      if (
+        typeof hostMembershipId !== 'string' ||
+        !isValidUUID(hostMembershipId)
+      ) {
+        throw new AppError(
+          400,
+          'INVALID_HOST_ID',
+          'hostMembershipId must be a valid UUID.'
+        );
+      }
+    }
+
+    // Validate times
+    if (typeof startTime !== 'string' || !startTime) {
+      throw new AppError(400, 'INVALID_START_TIME', 'startTime is required.');
+    }
+
+    if (typeof endTime !== 'string' || !endTime) {
+      throw new AppError(400, 'INVALID_END_TIME', 'endTime is required.');
+    }
+
+    if (endTime <= startTime) {
+      throw new AppError(
+        400,
+        'INVALID_END_TIME',
+        'endTime must be after startTime.'
+      );
+    }
+
+    // Validate repeat count
+    if (typeof repeatCount !== 'number' || !Number.isInteger(repeatCount)) {
+      throw new AppError(
+        400,
+        'INVALID_REPEAT_COUNT',
+        'repeatCount must be an integer.'
+      );
+    }
+
+    const sessions = await createRecurringSessions({
+      clubId,
+      title: typeof title === 'string' ? title.trim() : null,
+      locationId,
+      startTime,
+      endTime,
+      capacity:
+        typeof capacity === 'number' &&
+        Number.isInteger(capacity) &&
+        capacity > 0
+          ? capacity
+          : null,
+      hostMembershipId:
+        typeof hostMembershipId === 'string' ? hostMembershipId : null,
+      repeatCount,
+    });
+
+    void createAuditLog({
+      clubId,
+      actorUserId: actorRow.rows[0].user_id,
+      entityType: 'session',
+      entityId: sessions[0]?.id ?? '',
+      sessionId: sessions[0]?.id ?? '',
+      action: 'recurring_sessions_created',
+      metadata: {
+        title: sessions[0]?.title ?? null,
+        locationId,
+        repeatCount,
+        sessionCount: sessions.length,
+      },
+    });
+
+    res.status(201).json({ success: true, data: sessions });
   } catch (error) {
     next(error);
   }
