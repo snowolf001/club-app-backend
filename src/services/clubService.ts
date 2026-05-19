@@ -5,6 +5,10 @@ import { writeAuditLog, createAuditLog } from './auditLogService';
 import { logger } from '../lib/logger';
 import { normalizeRole, isOwner, isOwnerOrHost } from '../lib/permissions';
 import { recordSystemEvent } from '../lib/systemEvents';
+import {
+  cleanupCloudinaryFolder,
+  extractPublicIdFromUrl,
+} from './uploadService';
 
 function generateJoinCode(): string {
   return randomBytes(4).toString('hex').toUpperCase(); // 8 hex chars
@@ -792,6 +796,14 @@ export async function updateClubInfo(
   clubId: string,
   updates: Partial<ClubInfo>
 ): Promise<ClubInfo> {
+  let oldRow: ClubRow | null = null;
+  if (
+    updates.clubLogoUrl !== undefined ||
+    updates.paymentMethods !== undefined
+  ) {
+    oldRow = await fetchClubRow(clubId);
+  }
+
   const queryParts: string[] = [];
   const values: unknown[] = [];
   let idx = 1;
@@ -853,5 +865,52 @@ export async function updateClubInfo(
     values
   );
 
-  return getClubInfo(clubId);
+  const updatedInfo = await getClubInfo(clubId);
+
+  // Background cleanup of orphaned images
+  if (
+    updates.clubLogoUrl !== undefined ||
+    updates.paymentMethods !== undefined
+  ) {
+    void (async () => {
+      try {
+        if (updates.clubLogoUrl !== undefined) {
+          // Explicitly delete previous saved logo if it changed
+          if (
+            oldRow?.club_logo_url &&
+            oldRow.club_logo_url !== updatedInfo.clubLogoUrl
+          ) {
+            const oldId = extractPublicIdFromUrl(oldRow.club_logo_url);
+            import('./uploadService')
+              .then(({ deleteImageFromCloudinary }) => {
+                if (oldId) deleteImageFromCloudinary(oldId);
+              })
+              .catch(console.error);
+          }
+
+          const logoFolder = `passeo/clubs/${clubId}/logos`;
+          const keepLogoId = extractPublicIdFromUrl(updatedInfo.clubLogoUrl);
+          await cleanupCloudinaryFolder(
+            logoFolder,
+            keepLogoId ? [keepLogoId] : []
+          );
+        }
+
+        if (updates.paymentMethods !== undefined) {
+          const qrFolder = `passeo/clubs/${clubId}/payment_qr`;
+          const keepQrIds = updatedInfo.paymentMethods
+            .map((m) => extractPublicIdFromUrl(m.qrImageUrl))
+            .filter((id): id is string => id !== null);
+          await cleanupCloudinaryFolder(qrFolder, keepQrIds);
+        }
+      } catch (err) {
+        logger.error('Failed background image cleanup:', {
+          clubId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+  }
+
+  return updatedInfo;
 }
