@@ -608,6 +608,16 @@ export async function deleteSessionHandler(
       );
     }
 
+    // Only upcoming sessions with no attendance may be deleted
+    const now = new Date();
+    if (new Date(session.startTime) <= now) {
+      throw new AppError(
+        409,
+        'SESSION_NOT_DELETABLE',
+        'Only upcoming sessions can be deleted.'
+      );
+    }
+
     await deleteSession(sessionId);
 
     void createAuditLog({
@@ -665,7 +675,14 @@ export async function updateSessionHandler(
       );
     }
 
-    const { hostMembershipId } = req.body as Record<string, unknown>;
+    const {
+      hostMembershipId,
+      title,
+      startTime,
+      endTime,
+      locationId,
+      capacity,
+    } = req.body as Record<string, unknown>;
 
     // hostMembershipId must be a UUID string or explicitly null to clear
     if (hostMembershipId !== undefined && hostMembershipId !== null) {
@@ -681,6 +698,128 @@ export async function updateSessionHandler(
       }
     }
 
+    if (title !== undefined && title !== null && typeof title !== 'string') {
+      throw new AppError(400, 'INVALID_TITLE', 'title must be a string.');
+    }
+
+    if (startTime !== undefined && typeof startTime !== 'string') {
+      throw new AppError(
+        400,
+        'INVALID_START_TIME',
+        'startTime must be an ISO string.'
+      );
+    }
+    if (endTime !== undefined && typeof endTime !== 'string') {
+      throw new AppError(
+        400,
+        'INVALID_END_TIME',
+        'endTime must be an ISO string.'
+      );
+    }
+
+    // ── Status-aware time validation ──────────────────────────────────────────
+    const now = new Date();
+    const existingStart = new Date(existingSession.startTime);
+    const existingEnd = new Date(existingSession.endTime);
+
+    const sessionLifecycle =
+      now < existingStart
+        ? 'upcoming'
+        : now <= existingEnd
+          ? 'active'
+          : 'ended';
+
+    const resolvedStart = startTime
+      ? new Date(startTime as string)
+      : existingStart;
+    const resolvedEnd = endTime ? new Date(endTime as string) : existingEnd;
+
+    if (sessionLifecycle === 'ended') {
+      // Ended sessions: time fields are frozen — reject any attempt to change them
+      if (startTime !== undefined) {
+        throw new AppError(
+          409,
+          'SESSION_ENDED',
+          'Cannot change start time of an ended session.'
+        );
+      }
+      if (endTime !== undefined) {
+        throw new AppError(
+          409,
+          'SESSION_ENDED',
+          'Cannot change end time of an ended session.'
+        );
+      }
+    } else if (sessionLifecycle === 'active') {
+      // Active sessions: starts_at is frozen; ends_at can be adjusted
+      if (startTime !== undefined) {
+        throw new AppError(
+          409,
+          'SESSION_ALREADY_STARTED',
+          'Cannot change the start time of a session that is already in progress.'
+        );
+      }
+      if (endTime !== undefined) {
+        // New end must be in the future and after existing start
+        if (resolvedEnd <= now) {
+          throw new AppError(
+            400,
+            'INVALID_END_TIME',
+            'The new end time must be in the future.'
+          );
+        }
+        if (resolvedEnd <= existingStart) {
+          throw new AppError(
+            400,
+            'INVALID_END_TIME',
+            'End time must be after the session start time.'
+          );
+        }
+      }
+    } else {
+      // Upcoming sessions: full time editing allowed
+      if (startTime !== undefined && resolvedStart <= now) {
+        throw new AppError(
+          400,
+          'INVALID_START_TIME',
+          'Start time must be in the future for upcoming sessions.'
+        );
+      }
+      if (resolvedEnd <= resolvedStart) {
+        throw new AppError(
+          400,
+          'INVALID_TIMES',
+          'End time must be after start time.'
+        );
+      }
+    }
+
+    if (
+      locationId !== undefined &&
+      locationId !== null &&
+      typeof locationId !== 'string'
+    ) {
+      throw new AppError(
+        400,
+        'INVALID_LOCATION_ID',
+        'locationId must be a string.'
+      );
+    }
+
+    if (capacity !== undefined && capacity !== null) {
+      if (
+        typeof capacity !== 'number' ||
+        !Number.isInteger(capacity) ||
+        capacity < 1
+      ) {
+        throw new AppError(
+          400,
+          'INVALID_CAPACITY',
+          'capacity must be a positive integer.'
+        );
+      }
+    }
+
     const resolvedHostId: string | null | undefined =
       hostMembershipId === null
         ? null
@@ -690,6 +829,11 @@ export async function updateSessionHandler(
 
     const session = await updateSession(sessionId, {
       hostMembershipId: resolvedHostId,
+      title: title as string | null | undefined,
+      startTime: startTime as string | undefined,
+      endTime: endTime as string | undefined,
+      locationId: locationId as string | null | undefined,
+      capacity: capacity as number | null | undefined,
     });
 
     res.json({ success: true, data: session });

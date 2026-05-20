@@ -275,7 +275,14 @@ export async function createSession(params: {
 
 export async function updateSession(
   sessionId: string,
-  params: { hostMembershipId?: string | null }
+  params: {
+    hostMembershipId?: string | null;
+    title?: string | null;
+    startTime?: string;
+    endTime?: string;
+    locationId?: string | null;
+    capacity?: number | null;
+  }
 ): Promise<SessionItem> {
   const session = await getSessionById(sessionId);
 
@@ -283,9 +290,40 @@ export async function updateSession(
     if (params.hostMembershipId !== null) {
       await assertHostInClub(params.hostMembershipId, session.clubId);
     }
+  }
+
+  const setClauses: string[] = ['updated_at = NOW()'];
+  const values: unknown[] = [];
+
+  const push = (clause: string, value: unknown) => {
+    values.push(value);
+    setClauses.push(`${clause} = $${values.length}`);
+  };
+
+  if (params.hostMembershipId !== undefined) {
+    push('host_membership_id', params.hostMembershipId);
+  }
+  if (params.title !== undefined) {
+    push('title', params.title);
+  }
+  if (params.startTime !== undefined) {
+    push('starts_at', params.startTime);
+  }
+  if (params.endTime !== undefined) {
+    push('ends_at', params.endTime);
+  }
+  if (params.locationId !== undefined) {
+    push('location_id', params.locationId);
+  }
+  if (params.capacity !== undefined) {
+    push('capacity', params.capacity);
+  }
+
+  if (values.length > 0) {
+    values.push(sessionId);
     await pool.query(
-      `UPDATE sessions SET host_membership_id = $1, updated_at = NOW() WHERE id = $2`,
-      [params.hostMembershipId, sessionId]
+      `UPDATE sessions SET ${setClauses.join(', ')} WHERE id = $${values.length}`,
+      values
     );
   }
 
