@@ -735,7 +735,7 @@ export async function updateSessionHandler(
     const resolvedEnd = endTime ? new Date(endTime as string) : existingEnd;
 
     if (sessionLifecycle === 'ended') {
-      // Ended sessions: time fields are frozen — reject any attempt to change them
+      // Ended sessions: time and host fields are frozen
       if (startTime !== undefined) {
         throw new AppError(
           409,
@@ -748,6 +748,13 @@ export async function updateSessionHandler(
           409,
           'SESSION_ENDED',
           'Cannot change end time of an ended session.'
+        );
+      }
+      if (hostMembershipId !== undefined) {
+        throw new AppError(
+          409,
+          'SESSION_ENDED',
+          'Cannot change the host of an ended session.'
         );
       }
     } else if (sessionLifecycle === 'active') {
